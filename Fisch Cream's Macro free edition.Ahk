@@ -5,6 +5,8 @@ CoordMode, Tooltip, Screen
 SetMouseDelay, -1 ; Disables mouse movement delay for faster execution
 SetBatchLines, -1 ; Disables batch line delays for faster execution
 
+Process, Priority,, H ; Makes it high priority
+
 if (A_ScreenDPI * 100 // 96 != 100) {
     Run, ms-settings:display
     msgbox, 0x1030, WARNING!!, % "Your Display Scale seems to be a value other than 100`%. This means the macro will NOT work correctly!`n`nTo change this, right-click on your Desktop -> Click 'Display Settings' -> Under 'Scale & Layout', set Scale to 100`% -> Close and Restart Roblox before starting the macro.", 60
@@ -346,10 +348,10 @@ Random(Min, Max) {
 ClickShake(ByRef ClickX, ByRef ClickY) {
     static MemoryX, MemoryY  ; Declare that variables that will be used here only
     ; Search for a white pixel within a specific area (shake detection)
-    PixelSearch, ClickX, ClickY, %ShakeXLeft%, %ShakeYLeft%, %ShakeXRight%, %ShakeYRight%, 0xFFFFFF, 15, Fast
+    PixelSearch, ClickX, ClickY, %ShakeXLeft%, %ShakeYLeft%, %ShakeXRight%, %ShakeYRight%, 0xFFFFFF, 0, Fast
     If (ErrorLevel = 0) {  ; If the pixel is found
         ; Small correction to the X value
-        ClickX += 10
+        ClickX += 25
 
         ; If the pixel position has changed, perform a click at the new position
         if (ClickX != MemoryX || ClickY != MemoryY) {
