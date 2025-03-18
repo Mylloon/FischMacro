@@ -1,7 +1,6 @@
 #SingleInstance, force  ; Ensures only one instance of the script is running at a time
 Coordmode, Mouse, Screen
 CoordMode, Pixel, Screen
-CoordMode, Tooltip, Screen
 SetMouseDelay, -1 ; Disables mouse movement delay for faster execution
 SetBatchLines, -1 ; Disables batch line delays for faster execution
 
@@ -48,7 +47,6 @@ Loop, 5 {
     For Color, Variation in ColorUI {
         PixelSearch,,, %IngameUiXLeft%, %IngameUiYLeft%, %IngameUiXRight%, %IngameUiXRight%, %Color%, %Variation%, Fast RGB
         If (ErrorLevel = 0) {
-            Tooltip, Pls Open Camera Mode
             Sleep 1000
             X := Round((RobloxWidth / 2560) * 2525)
             If (RobloxWidth >= A_ScreenWidth) && (RobloxHeight >= A_ScreenHeight) {
@@ -83,42 +81,19 @@ Global Color_White := {"0xFFFFFF": 15} ; Color for white (used for detecting cer
 Global Color_Bar := {"0x848587": 4, "0x787773": 4, "0x7a7873": 4} ; Colors for bar (with variations)
 
 ; = = = = = = = = = = = = = = = = = = = =
-; Calculation for Tooltip
-Loop, 20 {
-    TooltipPosY%A_Index% := (RobloxHeight / 1080) * 400 + (A_Index * 25)
-}
-SetTimer, UpdateTooltip, 1000 ; Updates the tooltip every second.
 RunTime := A_TickCount ; Stores the script's start time.
-UpdateTooltip() {
-    global RunTime, TooltipPosY2
-    Elapsed := A_TickCount - RunTime
-    Hours := Floor(Elapsed / 3600000)
-    Minutes := Floor((Elapsed - Hours * 3600000) / 60000)
-    Seconds := Floor((Elapsed - Hours * 3600000 - Minutes * 60000) / 1000)
-    Tooltip, Runtime: %Hours%h %Minutes%m %Seconds%s, 100, %TooltipPosY2%, 2
-}
-tooltip, Made By Cweamya, 100, %TooltipPosY1%, 1
-tooltip, Runtime: 0h 0m 0s, 100, %TooltipPosY2%, 2
-tooltip, Press "Space" to Exit, 100, %TooltipPosY4%, 3
+
 Reels()
 LastShakeTimer := A_TickCount
 Loop {
     WinActivate, Roblox ahk_exe RobloxPlayerBeta.exe
     ; If a click shake is detected, update the last shake time
     If ClickShake(X, Y) {
-        tooltip, Current Task: Shaking, 100, %TooltipPosY6%, 4
-        tooltip, Click X: %X%, 100, %TooltipPosY7%, 5
-        tooltip, Click Y: %Y%, 100, %TooltipPosY8%, 6
-        ClickCount++
-        tooltip, Click Count: %ClickCount%, 100, %TooltipPosY9%, 7
         LastShakeTimer := A_TickCount
     }
 
     ; If 7 seconds have passed since the last shake, trigger the Reels function
     If (A_TickCount - LastShakeTimer > 7000) {
-        tooltip, Current Task: FailSave Activated, 100, %TooltipPosY6%, 4
-        FailSave++
-        tooltip, FailSave Count: %FailSave%, 100, %TooltipPosY9%, 7
         Send m
         Sleep 250
         Reels()
@@ -140,38 +115,23 @@ Loop {
                 Control := Round((RobloxWidth/800) * ((320 * Control) + 97))
             }
         }
-        tooltip,,,, 7
-        tooltip,,,, 5
-        tooltip,,,, 6
-        tooltip, Current Task: Playing Bar Minigame, 100, %TooltipPosY6%, 4
-        tooltip, |, MiniGameXLeft + (Control * 0.8), (RobloxHeight * 1080) * 1015, 11
-        tooltip, |, MiniGameXRight - (Control * 0.8), (RobloxHeight * 1080) * 1015, 12
         Loop {
             ; Get the current position of the fish
             FishPos := Search(Color_Fish)
-            tooltip, ., FishPos, (RobloxHeight * 1080) * 1015, 13
-            tooltip,,,, 7
             ; If no fish is found, exit the loop
             If (!FishPos) {
                 Break
             }
-            tooltip,,,, 14
             ; If fish is on the left side of the control bar, stop clicking (Mouse(0))
             if (FishPos < MiniGameXLeft + (Control * 0.8)) {
                 Mouse(0)
-                tooltip, Direction: Max Left, 100, TooltipPosY8, 6
-                tooltip, <, MiniGameXLeft + (Control * 0.8), (RobloxHeight * 1080) * 1015, 11
                 Continue
             }
             ; If fish is on the right side of the control bar, start clicking (Mouse(1))
             else if (FishPos > MiniGameXRight - (Control * 0.8)) {
                 Mouse(1)
-                tooltip, Direction: Max Right, 100, TooltipPosY8, 6
-                tooltip, >, MiniGameXRight - (Control * 0.8), (RobloxHeight * 1080) * 1015, 12
                 Continue
             }
-            tooltip, |, MiniGameXLeft + (Control * 0.8), (RobloxHeight * 1080) * 1015, 11
-            tooltip, |, MiniGameXRight - (Control * 0.8), (RobloxHeight * 1080) * 1015, 12
 
             ; Search for the white bar and adjust position, or search for the fallback bar color
             Bar := Search(Color_White) ? Search(Color_White) + Round(Control * 0.5) : Search(Color_Bar)
@@ -186,15 +146,12 @@ Loop {
 
             ; If the fish is within the valid range, hold the mouse button
             If (Range >= 0) {
-                tooltip, >, Bar, (RobloxHeight * 1080) * 1015, 14
-                tooltip, Direction: >, 100, TooltipPosY8, 6
                 Mouse(1)
                 HoldTimer := A_TickCount
                 OriginalPos := Bar
                 Loop {
                     ; Continuously check the fish position and calculate the range
                     FishPos := Search(Color_Fish)
-                    tooltip, ., FishPos, (RobloxHeight * 1080) * 1015, 13
                     Range := FishPos - OriginalPos
                     Hold := HoldFormula(Range)
 
@@ -211,8 +168,6 @@ Loop {
                     Wait((A_TickCount - HoldTimer) * 0.6)
                 }
             } else {
-                tooltip, <, Bar, (RobloxHeight * 1080) * 1015, 14
-                tooltip, Direction: <, 100, TooltipPosY8, 6
                 ; If the fish is outside the range, release the mouse and adjust accordingly
                 HoldTimer := A_TickCount
                 Mouse(0)
@@ -223,11 +178,9 @@ Loop {
                 if (Wait(HoldFormula(Range) * 0.7)) {
                     Continue
                 }
-                tooltip,,,, 7
                 Loop {
                     ; Search for the fish position
                     FishPos := Search(Color_Fish)
-                    tooltip, ., FishPos, (RobloxHeight * 1080) * 1015, 13
                     ; Break if the fish is not found or the white bar is detected
                     if (!FishPos || Search(Color_White)) {
                         Break
@@ -262,15 +215,6 @@ Loop {
                 Mouse(0)
             }
         }
-        tooltip, Current Task: Minigame Ended Preparing to restart, 100, %TooltipPosY6%, 4
-        tooltip,,,, 6
-        tooltip,,,, 7
-        tooltip,,,, 11
-        tooltip,,,, 12
-        tooltip,,,, 13
-        tooltip,,,, 14
-        CatchTotal++
-        tooltip, Catch Total: %CatchTotal%, 100, %TooltipPosY3%, 20
         ; Wait for 1 second before repeating the loop and trigger the Reels action
         Sleep 1000
         Reels()
@@ -323,7 +267,6 @@ Mouse(State) {
 ; Function to handle the Reels action (reeling the fishing line)
 Reels() {
     global
-    tooltip, Current Task: Casting Rod, 100, %TooltipPosY6%, 4
     ; Move the mouse to a specific position
     MouseMove, 80, 400
 
@@ -333,9 +276,7 @@ Reels() {
     Click, Down
     Sleep Random(600, 1200)
     Click, Up  ; Release the mouse button
-    tooltip, Current Task: Wait for the bobber to appear, 100, %TooltipPosY6%, 4
     Sleep Random(1000, 1200)
-    ClickCount := 0
 }
 
 ; Function wrapping Random in a range
@@ -369,7 +310,7 @@ $space::exitapp
 
 ; Function to calculate hold time based on pixel distance (for Cream's Macro)
 HoldFormula(pixel) {
-    global RobloxWidth, TooltipPosY9  ; Use the global RobloxWidth variable
+    global RobloxWidth ; Use the global RobloxWidth variable
     ; Define a set of data pairs for calculating hold times
     data := [[0, 0], [16, 0], [132, 1], [217, 5], [365, 29], [450, 54], [534, 91], [632, 151], [736, 234], [817, 310], [900, 382], [997, 469], [1081, 541], [1164, 613], [1250, 686], [1347, 711], [1448, 721], [1531, 724], [1531, 9999]]
 
@@ -383,7 +324,6 @@ HoldFormula(pixel) {
     }
 
     hold := lower[1] + (pixel - lower[2]) * (upper[1] - lower[1]) / (upper[2] - lower[2])
-    tooltip, Hold: %hold%ms, 100, TooltipPosY9, 7
     ; Perform linear interpolation to calculate the hold time based on the pixel distance
     return % hold
 }
