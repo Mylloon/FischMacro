@@ -269,8 +269,8 @@ Loop {
         tooltip,,,, 14
         CatchTotal++
         tooltip, Catch Total: %CatchTotal%, 100, %TooltipPosY3%, 20
-        ; Wait for 3 seconds before repeating the loop and trigger the Reels action
-        Sleep 3000
+        ; Wait for 1 second before repeating the loop and trigger the Reels action
+        Sleep 1000
         Reels()
 
         ; Reset the last shake time
