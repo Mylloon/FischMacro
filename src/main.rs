@@ -26,6 +26,7 @@ fn main() {
     println!("Starting Roblox Fishing Macro");
 
     // Get screen dimensions
+    // TODO: Shouldn't we check Roblox dimensions?
     let screen_dim = get_screen_dimensions();
     println!(
         "Detected screen dimensions: {}x{}",
