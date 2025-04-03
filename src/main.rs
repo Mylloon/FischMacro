@@ -34,10 +34,6 @@ fn main() {
 
     let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
-    // Wait for Roblox to be in focus
-    println!("Please focus the Roblox window");
-    // TODO: Alt tab to the Sober Window
-
     // Calculate regions based on screen dimensions
     let mini_game_region = calculate_mini_game_region(&screen_dim);
     let shake_region = calculate_shake_region(&screen_dim);
@@ -87,7 +83,11 @@ fn main() {
 
     loop {
         // Check for shake
-        if check_shake(&shake_region).is_some() {
+        if let Some((click_x, click_y)) = check_shake(&shake_region) {
+            // Click at the shake position
+            println!("Shake @ {click_x},{click_y}");
+            enigo.move_mouse(click_x, click_y, Abs).unwrap();
+            enigo.button(Button::Left, Click).unwrap();
             last_shake_time = Instant::now();
         }
 
@@ -102,7 +102,7 @@ fn main() {
         let screen = take_screenshot();
 
         // Find fish and white markers
-        if let (Some(fish_pos), Some(_)) = (
+        if let (Some(_), Some(_)) = (
             search_color(&screen, &color_fish, &mini_game_region),
             search_color(&screen, &color_white, &mini_game_region),
         ) {
@@ -131,10 +131,10 @@ fn main() {
 
                 // Check if fish is too far left or right
                 if fish_x < mini_game_region.0 + (control_val as f32 * 0.8) as i32 {
-                    mouse_control(&mut enigo, false);
+                    enigo.button(Button::Left, Release).unwrap();
                     continue;
                 } else if fish_x > mini_game_region.2 - (control_val as f32 * 0.8) as i32 {
-                    mouse_control(&mut enigo, true);
+                    enigo.button(Button::Left, Press).unwrap();
                     continue;
                 }
 
@@ -154,7 +154,8 @@ fn main() {
                 let range = fish_x - bar_pos;
 
                 if range >= 0 {
-                    mouse_control(&mut enigo, true);
+                    // Positive range handling
+                    enigo.button(Button::Left, Press).unwrap();
                     let hold_timer = Instant::now();
                     let original_pos = bar_pos;
 
@@ -173,7 +174,10 @@ fn main() {
                             }
 
                             // Check if fish is still valid
-                            if fish_x < mini_game_region.0 || fish_x > mini_game_region.2 {
+                            if fish_x < mini_game_region.0
+                                || fish_x > mini_game_region.2
+                                || wait_for_time(&mini_game_region, 10)
+                            {
                                 break;
                             }
                         } else {
@@ -185,22 +189,64 @@ fn main() {
                     }
 
                     if success {
-                        mouse_control(&mut enigo, false);
+                        enigo.button(Button::Left, Release).unwrap();
                         sleep(Duration::from_millis(
                             (hold_timer.elapsed().as_millis() as f64 * 0.6) as u64,
                         ));
                     }
                 } else {
-                    // Handle negative range case
+                    // Negative range handling
                     let hold_timer = Instant::now();
-                    mouse_control(&mut enigo, false);
+                    enigo.button(Button::Left, Release).unwrap();
                     let range_abs = range.abs();
+                    let mut continue_now = false;
 
-                    sleep(Duration::from_millis(
-                        (f64::from(hold_formula(range_abs, screen_dim.width)) * 0.7) as u64,
-                    ));
+                    // Wait proportionally to the range
+                    let wait_time = (hold_formula(range_abs, screen_dim.width) as f32 * 0.7) as u64;
+                    if wait_for_time(&mini_game_region, wait_time) {
+                        continue;
+                    }
 
-                    // TODO: Continue with the rest of the fishing logic...
+                    loop {
+                        let screen = take_screenshot();
+
+                        // Get current fish position
+                        let fish_pos = search_color(&screen, &color_fish, &mini_game_region);
+                        if fish_pos.is_none()
+                            || search_color(&screen, &color_white, &mini_game_region).is_some()
+                        {
+                            break;
+                        }
+
+                        if wait_for_time(&mini_game_region, 10) {
+                            continue_now = true;
+                            break;
+                        }
+
+                        // Check if bar has caught up to fish
+                        if let Some(current_bar_pos) =
+                            search_color(&screen, &color_bar, &mini_game_region)
+                        {
+                            let adjusted_pos =
+                                current_bar_pos - ((screen_dim.width as f32 / 800.0) * 30.0) as i32;
+                            if adjusted_pos <= fish_pos.unwrap() {
+                                break;
+                            }
+                        }
+                    }
+
+                    if continue_now {
+                        continue;
+                    }
+
+                    // Start pressing after waiting
+                    enigo.button(Button::Left, Press).unwrap();
+                    if wait_for_time(&mini_game_region, hold_timer.elapsed().as_millis() as u64) {
+                        enigo.button(Button::Left, Release).unwrap();
+                        continue;
+                    }
+
+                    enigo.button(Button::Left, Release).unwrap();
                 }
             }
 
@@ -274,18 +320,11 @@ fn search_color(
     None
 }
 
-fn mouse_control(enigo: &mut Enigo, down: bool) {
-    if down {
-        enigo.button(Button::Left, Press).unwrap();
-    } else {
-        enigo.button(Button::Left, Release).unwrap();
-    }
-}
-
 fn reels(enigo: &mut Enigo) {
     // Move mouse
     enigo.move_mouse(80, 400, Abs).unwrap();
 
+    println!("Reeling...");
     // Click and hold
     enigo.button(Button::Left, Press).unwrap();
     sleep(Duration::from_millis(random_range(600, 1200)));
@@ -386,6 +425,9 @@ fn random_range(min: u64, max: u64) -> u64 {
 }
 
 fn check_shake(region: &(i32, i32, i32, i32)) -> Option<(i32, i32)> {
+    let mut memory_x = 0;
+    let mut memory_y = 0;
+
     let (x_min, y_min, x_max, y_max) = *region;
     let screen = take_screenshot();
 
@@ -396,20 +438,64 @@ fn check_shake(region: &(i32, i32, i32, i32)) -> Option<(i32, i32)> {
             }
 
             let pixel = screen.get_pixel(x as u32, y as u32);
+
+            // Check for white pixel (shake indicator)
             if pixel[0] > 240 && pixel[1] > 240 && pixel[2] > 240 {
                 let click_x = x + 25;
 
-                let mut enigo = Enigo::new(&Settings::default()).unwrap();
+                // Check if position has changed from memory
+                if memory_x != click_x || memory_y != y {
+                    // Update memory
+                    memory_x = click_x;
+                    memory_y = y;
 
-                // Simulate click
-                enigo.move_mouse(click_x, y, Abs).unwrap();
-                enigo.button(Button::Left, Click).unwrap();
+                    return Some((click_x, y));
+                }
 
-                sleep(Duration::from_millis(100));
-                return Some((click_x, y));
+                return None;
             }
         }
     }
 
     None
+}
+
+fn wait_for_time(mini_game_region: &(i32, i32, i32, i32), time_ms: u64) -> bool {
+    let start_time = Instant::now();
+
+    loop {
+        let screen = take_screenshot();
+        let color_fish = vec![
+            ColorTarget {
+                color: (0x43, 0x4b, 0x5b),
+                variation: 3,
+            },
+            ColorTarget {
+                color: (0x4a, 0x4a, 0x5c),
+                variation: 4,
+            },
+            ColorTarget {
+                color: (0x47, 0x51, 0x5d),
+                variation: 4,
+            },
+        ];
+
+        let fish_pos = search_color(&screen, &color_fish, mini_game_region);
+
+        // If no fish found or fish is outside valid range, return whether fish was found
+        if let Some(pos) = fish_pos {
+            if pos < mini_game_region.0 || pos > mini_game_region.2 {
+                return true;
+            }
+        } else {
+            return false;
+        }
+
+        // If we've waited long enough, break the loop
+        if start_time.elapsed() > Duration::from_millis(time_ms) {
+            break;
+        }
+    }
+
+    false
 }
