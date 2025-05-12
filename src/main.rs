@@ -8,6 +8,7 @@ use image::RgbImage;
 use rand::Rng;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use xcap::Monitor;
 
 // Constants for screen dimensions
@@ -25,19 +26,19 @@ struct ColorTarget {
 fn main() {
     println!("Starting Roblox Fishing Macro");
 
+    // Notice
+    println!("To make this program work, hide the quest (top-right book button).");
+
+    // Check that Roblox is running
+    assert!(check_running("sober"), "Roblox not found.");
+    println!("Roblox found.");
+
     // Get screen dimensions
-    // TODO: Shouldn't we check Roblox dimensions?
-    let screen_dim = get_screen_dimensions();
+    let screen_dim = get_screen_dimensions().unwrap();
     println!(
         "Detected screen dimensions: {}x{}",
         screen_dim.width, screen_dim.height
     );
-
-    let mut enigo = Enigo::new(&Settings::default()).unwrap();
-
-    // Calculate regions based on screen dimensions
-    let mini_game_region = calculate_mini_game_region(&screen_dim);
-    let shake_region = calculate_shake_region(&screen_dim);
 
     // Define color targets
     let color_fish = vec![
@@ -75,16 +76,21 @@ fn main() {
         },
     ];
 
+    // Calculate regions based on screen dimensions
+    let mini_game_region = calculate_mini_game_region(&screen_dim);
+    let shake_region = calculate_shake_region(&screen_dim);
+
     // Start the main loop
     let mut last_shake_time = Instant::now();
     let mut control: Option<i32> = None;
+    let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
     // Initial reel
     reels(&mut enigo);
 
     loop {
         // Check for shake
-        if let Some((click_x, click_y)) = check_shake(&shake_region) {
+        if let Some((click_x, click_y)) = check_shake(&mut enigo, &shake_region) {
             // Click at the shake position
             println!("Shake @ {click_x},{click_y}");
             enigo.move_mouse(click_x, click_y, Abs).unwrap();
@@ -100,7 +106,7 @@ fn main() {
         }
 
         // Take screenshot for processing
-        let screen = take_screenshot();
+        let screen = take_screenshot().unwrap();
 
         // Find fish and white markers
         if let (Some(_), Some(_)) = (
@@ -120,7 +126,7 @@ fn main() {
 
             // Main fishing logic loop
             loop {
-                let screen = take_screenshot();
+                let screen = take_screenshot().unwrap();
 
                 // Get current fish position
                 let fish_pos = search_color(&screen, &color_fish, &mini_game_region);
@@ -162,7 +168,7 @@ fn main() {
 
                     let mut success = false;
                     loop {
-                        let screen = take_screenshot();
+                        let screen = take_screenshot().unwrap();
                         let fish_pos = search_color(&screen, &color_fish, &mini_game_region);
 
                         if let Some(fish_x) = fish_pos {
@@ -184,9 +190,6 @@ fn main() {
                         } else {
                             break;
                         }
-
-                        // Short pause to prevent CPU overuse
-                        sleep(Duration::from_millis(10));
                     }
 
                     if success {
@@ -209,7 +212,7 @@ fn main() {
                     }
 
                     loop {
-                        let screen = take_screenshot();
+                        let screen = take_screenshot().unwrap();
 
                         // Get current fish position
                         let fish_pos = search_color(&screen, &color_fish, &mini_game_region);
@@ -256,37 +259,59 @@ fn main() {
             reels(&mut enigo);
             last_shake_time = Instant::now();
         }
-
-        // Sleep to prevent high CPU usage
-        sleep(Duration::from_millis(50));
     }
 }
 
 /* Helper functions */
 
-fn get_monitor() -> Monitor {
-    let screens = Monitor::all().unwrap();
-    screens
+/// Find primary monitor
+fn get_monitor() -> Option<Monitor> {
+    Monitor::all()
+        .ok()?
         .iter()
-        .find(|x| x.is_primary().unwrap_or_default()) // Use primary screen
-        .unwrap()
-        .clone()
+        .find(|x| x.is_primary().unwrap_or_default())
+        .cloned()
 }
 
-fn get_screen_dimensions() -> ScreenDimensions {
-    let screen = get_monitor();
+/// Find screen dimensions
+fn get_screen_dimensions() -> Result<ScreenDimensions, &'static str> {
+    let screen = get_monitor().ok_or("No primary monitor found")?;
 
-    ScreenDimensions {
-        width: screen.width().unwrap(),
-        height: screen.height().unwrap(),
+    if let (Ok(width), Ok(height)) = (screen.width(), screen.height()) {
+        Ok(ScreenDimensions { width, height })
+    } else {
+        Err("Can't find screen dimensions")
     }
 }
 
-fn take_screenshot() -> RgbImage {
-    let screen = get_monitor();
-    let image = screen.capture_image().unwrap();
+/// Check if a process is running
+fn check_running(name: &'static str) -> bool {
+    let sys: System = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+    );
 
-    RgbImage::from_raw(image.width(), image.height(), image.as_raw().clone()).unwrap()
+    sys.processes()
+        .values()
+        .any(|process| process.name() == name)
+}
+
+fn take_screenshot() -> Result<RgbImage, &'static str> {
+    let screen = get_monitor().ok_or("No primary monitor found")?;
+
+    let image = screen
+        .capture_image()
+        .map_err(|_| "Failed to capture image")?;
+
+    RgbImage::from_raw(
+        image.width(),
+        image.height(),
+        image
+            .chunks(4)
+            .flat_map(|pixel| pixel.iter().take(3)) // Take only R, G, B
+            .copied()
+            .collect(),
+    )
+    .ok_or("Failed to create RgbImage from raw data")
 }
 
 fn search_color(
@@ -425,35 +450,21 @@ fn random_range(min: u64, max: u64) -> u64 {
     rand::rng().random_range(min..=max)
 }
 
-fn check_shake(region: &(i32, i32, i32, i32)) -> Option<(i32, i32)> {
-    let mut memory_x = 0;
-    let mut memory_y = 0;
-
+fn check_shake(enigo: &mut Enigo, region: &(i32, i32, i32, i32)) -> Option<(i32, i32)> {
     let (x_min, y_min, x_max, y_max) = *region;
-    let screen = take_screenshot();
+
+    // Move cursor out of the region
+    enigo.move_mouse(x_min, y_min - 50, Abs).unwrap();
+
+    let image = take_screenshot().unwrap();
 
     for y in y_min..=y_max {
         for x in x_min..=x_max {
-            if x < 0 || y < 0 || x >= screen.width() as i32 || y >= screen.height() as i32 {
-                continue;
-            }
-
-            let pixel = screen.get_pixel(x as u32, y as u32);
+            let pixel = image.get_pixel(x as u32, y as u32);
 
             // Check for white pixel (shake indicator)
-            if pixel[0] > 240 && pixel[1] > 240 && pixel[2] > 240 {
-                let click_x = x + 25;
-
-                // Check if position has changed from memory
-                if memory_x != click_x || memory_y != y {
-                    // Update memory
-                    memory_x = click_x;
-                    memory_y = y;
-
-                    return Some((click_x, y));
-                }
-
-                return None;
+            if pixel[0] > 250 && pixel[1] > 250 && pixel[2] > 250 {
+                return Some((x + 25, y));
             }
         }
     }
@@ -465,7 +476,7 @@ fn wait_for_time(mini_game_region: &(i32, i32, i32, i32), time_ms: u64) -> bool 
     let start_time = Instant::now();
 
     loop {
-        let screen = take_screenshot();
+        let screen = take_screenshot().unwrap();
         let color_fish = vec![
             ColorTarget {
                 color: (0x43, 0x4b, 0x5b),
