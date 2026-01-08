@@ -452,8 +452,8 @@ fn calculate_control_width(screen: &RgbImage, region: &Region) -> Option<i32> {
 
 fn hold_formula(gap: i32, full_area: &Dimensions) -> i32 {
     info!("info: gap={gap} , w={}", full_area.width);
-    ((300. * gap.bad_cast() / ((full_area.width.cast_signed().bad_cast()) * 0.5)).bad_cast())
-        .clamp(0, 2000)
+    ((500. * gap.bad_cast() / ((full_area.width.cast_signed().bad_cast()) * 0.5)).bad_cast())
+        .clamp(200, 2000)
 }
 
 /// Returns the coordinates of the shake bubble
