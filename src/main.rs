@@ -15,7 +15,7 @@ use fischy::get_roblox_executable_name;
 use fischy::helpers::BadCast;
 use fischy::{ScreenRecorder, check_running, raise};
 use image::{Rgb, RgbImage};
-use log::{error, info, warn};
+use log::{info, warn};
 use rand::Rng;
 use rdev::EventType::KeyPress;
 use rdev::{Event, Key, listen};
@@ -35,6 +35,7 @@ struct Args {
     debug: bool,
 }
 
+/// Init logger based on debug level
 fn init_logger(debug_mode: bool) {
     let mut builder = env_logger::Builder::new();
     if debug_mode {
@@ -88,6 +89,8 @@ fn main() {
     let mut last_shake_time = Instant::now();
     reels(&mut enigo, &mut last_shake_time);
 
+    // TODO: Add a shake_count (if we've been skaing 20 times, maybe we were prbly not shaking)
+
     let mut rod_control_window_width: Option<i32> = None;
     loop {
         // Check for shake
@@ -124,6 +127,7 @@ fn main() {
             // Initialize control width if not set
             if rod_control_window_width.is_none() {
                 rod_control_window_width = Some(
+                    // TODO: what is the magic number 0.12 means?
                     calculate_control_width(&screen, &mini_game_region).unwrap_or(
                         (mini_game_region.get_size().width.cast_signed().bad_cast() * 0.12)
                             .bad_cast(),
@@ -141,7 +145,6 @@ fn main() {
                 COLOR_WHITE,
                 &mini_game_region,
                 rod_control_window_width.unwrap_or_default(),
-                &screen_dim,
             );
             info!("Fishing ended!");
 
@@ -172,7 +175,7 @@ fn search_color(screen: &RgbImage, targets: &[ColorTarget], region: &Region) -> 
     None
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+/// Catch a fish!
 fn fishing_loop(
     enigo: &mut Enigo,
     recorder: &mut ScreenRecorder,
@@ -181,9 +184,8 @@ fn fishing_loop(
     color_white: &[ColorTarget],
     mini_game_region: &Region,
     control_val: i32,
-    screen_dim: &Dimensions,
 ) {
-    warn!("init with c={control_val}");
+    warn!("init with control value of {control_val}px");
     loop {
         let screen = recorder
             .take_screenshot()
@@ -223,18 +225,18 @@ fn fishing_loop(
         let bar_pos = if let Some(white_pos) =
             search_color(&screen, color_white, mini_game_region).map(|p| p.x.cast_signed())
         {
+            info!("Fish inside the bar");
             white_pos + (control_val.bad_cast() * 0.5).bad_cast()
         } else if let Some(bar_pos) =
             search_color(&screen, color_bar, mini_game_region).map(|p| p.x.cast_signed())
         {
-            error!("How we call that?");
-            bar_pos
+            info!("Fish outside of the bar");
+            bar_pos + (control_val.bad_cast() * 0.5).bad_cast()
         } else {
             info!("Didn't find any bar color");
-
-            warn!("ending1");
+            warn!("It's hard to keep up with this fish");
             enigo.button(Button::Left, Release).expect("Packup the rod");
-            break; // FIXME: should we break ?
+            continue;
         };
 
         // Calculate range between fish and bar
@@ -243,129 +245,31 @@ fn fishing_loop(
 
         if range >= 0 {
             info!("==> vers la droite!");
-            // Positive range handling
             enigo.button(Button::Left, Press).expect("Clicking failed");
-            let hold_timer = Instant::now();
-            let current_pos = bar_pos;
-
-            // Vérifie 1 truc
-            let mut success = false;
-            loop {
-                let screen = recorder
-                    .take_screenshot()
-                    .expect("Taking screenshot failed");
-
-                if let Some(fish_x) =
-                    search_color(&screen, color_fish, mini_game_region).map(|p| p.x.cast_signed())
-                {
-                    let range = fish_x - current_pos;
-                    let hold_time = hold_formula(range, &mini_game_region.get_size());
-
-                    info!("found fish at {fish_x} - range is {range} - will hold for {hold_time}");
-                    if hold_timer.elapsed()
-                        >= Duration::from_millis(hold_time.cast_unsigned().into())
-                    {
-                        success = true;
-                        break;
-                    }
-
-                    // Check if fish is still valid
-                    info!("Hold until elapsed or fish left region invalid");
-                    if fish_x < mini_game_region.point1.x.cast_signed()
-                        || fish_x > mini_game_region.point2.x.cast_signed()
-                        || wait_for_time(recorder, mini_game_region, 10, color_fish)
-                    {
-                        break;
-                    }
-                } else {
-                    info!("did not found any fish");
-                    break;
-                }
-            }
-
-            enigo
-                .button(Button::Left, Release)
-                .expect("Releasing after losing fish failed");
-            if success {
-                sleep(Duration::from_millis(u64::from(
-                    (i32::try_from(hold_timer.elapsed().as_millis())
-                        .unwrap_or_default()
-                        .bad_cast()
-                        * 0.6)
-                        .bad_cast()
-                        .cast_unsigned(),
-                )));
-            }
         } else {
-            info!("==> vers la gauche!");
-            // Negative range handling
-            let hold_timer = Instant::now();
+            info!("<== vers la gauche!");
             enigo
                 .button(Button::Left, Release)
-                .expect("Can't release click");
-            let range_abs = range.abs();
-            let mut continue_now = false;
-
-            // Wait proportionally to the range
-            let wait_time: u64 = (hold_formula(range_abs, &mini_game_region.get_size()).bad_cast()
-                * 0.7)
-                .bad_cast()
-                .try_into()
-                .unwrap_or_default();
-            if wait_for_time(recorder, mini_game_region, wait_time, color_fish) {
-                continue;
-            }
-
-            loop {
-                let screen = recorder
-                    .take_screenshot()
-                    .expect("Taking screenshot failed");
-
-                // Get current fish position
-                let fish_pos = search_color(&screen, color_fish, mini_game_region);
-                if fish_pos.is_none()
-                    || search_color(&screen, color_white, mini_game_region).is_some()
-                {
-                    break;
-                }
-
-                if wait_for_time(recorder, mini_game_region, 10, color_fish) {
-                    continue_now = true;
-                    break;
-                }
-
-                // Check if bar has caught up to fish
-                if let Some(current_bar_pos) =
-                    search_color(&screen, color_bar, mini_game_region).map(|p| p.x.cast_signed())
-                {
-                    let adjusted_pos = current_bar_pos
-                        - (screen_dim.width.cast_signed().bad_cast() * 0.04).bad_cast();
-                    if adjusted_pos
-                        <= fish_pos
-                            .map(|p| p.x.cast_signed())
-                            .expect("Fish not found?")
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if continue_now {
-                continue;
-            }
-
-            // Start pressing after waiting
-            enigo.button(Button::Left, Press).expect("Can't click");
-            wait_for_time(
-                recorder,
-                mini_game_region,
-                u64::try_from(hold_timer.elapsed().as_millis()).unwrap_or_default(),
-                color_fish,
-            );
-            enigo
-                .button(Button::Left, Release)
-                .expect("Can't release click");
+                .expect("Releasing failed");
         }
+
+        let range = fish_x - bar_pos;
+        let hold_time = hold_formula(range, &mini_game_region.get_size());
+
+        info!("Found fish at x={fish_x} - distance fish<->hook is {range} - holding {hold_time}ms");
+        while wait_for_time(
+            recorder,
+            mini_game_region,
+            hold_time.cast_unsigned().into(),
+            color_fish,
+        ) {
+            // Calm down, CPU
+            sleep(Duration::from_millis(10));
+        }
+
+        enigo
+            .button(Button::Left, Release)
+            .expect("Releasing after losing fish failed");
     }
 }
 
@@ -384,7 +288,7 @@ fn reels(enigo: &mut Enigo, last_shake_time: &mut Instant) {
         .button(Button::Left, Release)
         .expect("Can't release the line: failed to release mouse button");
 
-    sleep(Duration::from_millis(rand::rng().random_range(1000..=1200)));
+    sleep(Duration::from_millis(1200));
     *last_shake_time = Instant::now();
 }
 
@@ -450,29 +354,32 @@ fn calculate_control_width(screen: &RgbImage, region: &Region) -> Option<i32> {
     left.zip(right).map(|(l, r)| r - l)
 }
 
+/// Determine how long we should hold the line
+/// based on the distance fish <-> middle of the hook
 fn hold_formula(gap: i32, full_area: &Dimensions) -> i32 {
-    info!("info: gap={gap} , w={}", full_area.width);
-    ((500. * gap.bad_cast() / ((full_area.width.cast_signed().bad_cast()) * 0.5)).bad_cast())
-        .clamp(200, 2000)
+    info!("area_width={}", full_area.width);
+    ((1400. * gap.bad_cast() / (full_area.width.cast_signed().bad_cast())).bad_cast())
+        .clamp(100, 2000)
 }
 
 /// Returns the coordinates of the shake bubble
 fn check_shake(enigo: &mut Enigo, screen: &mut ScreenRecorder, region: &Region) -> Option<Point> {
     let [x_min, y_min, x_max, y_max] = region.corners().map(u32::cast_signed);
 
-    // Move cursor out of the region
-    enigo
-        .move_mouse(x_max, y_max + 30, Abs)
-        .expect("Can't move mouse");
-
-    // Sleep to be sure the screenshot won't capture our cursor
-    // (Sober creating a custom cursor)
+    // Move cursor out of the region (Sober creating a custom cursor)
     #[cfg(target_os = "linux")]
-    sleep(Duration::from_millis(300));
+    {
+        enigo
+            .move_mouse(x_max, y_max + 30, Abs)
+            .expect("Can't move mouse");
+
+        // Sleep to be sure the screenshot won't capture our cursor
+        sleep(Duration::from_millis(300));
+    }
 
     let image = screen.take_screenshot().expect("Can't take screenshot");
 
-    let white = ColorTarget {
+    let pure_white = ColorTarget {
         color: Rgb([0xff, 0xff, 0xff]),
         variation: 1,
     };
@@ -482,8 +389,8 @@ fn check_shake(enigo: &mut Enigo, screen: &mut ScreenRecorder, region: &Region) 
             let pixel = image.get_pixel(x.cast_unsigned(), y.cast_unsigned());
 
             // Check for white pixel (shake indicator)
-            if white.matches(*pixel) {
-                // Wait because why not (FIXME WHYYYYYYYY)
+            if pure_white.matches(*pixel) {
+                // TODO: Why do we wait here 100 ms ?
                 sleep(Duration::from_millis(100));
 
                 return Some(Point {
@@ -497,6 +404,12 @@ fn check_shake(enigo: &mut Enigo, screen: &mut ScreenRecorder, region: &Region) 
     None
 }
 
+/// Continuously the screen, stop waiting until:
+/// 1. Fish in the window
+/// 2. Time runs out
+///
+/// true => still have to wait
+/// false => break
 fn wait_for_time(
     recorder: &mut ScreenRecorder,
     mini_game_region: &Region,
@@ -531,6 +444,7 @@ fn wait_for_time(
     false
 }
 
+/// Register specific keypress that will stop the program
 fn register_keybinds() {
     spawn(|| {
         listen(|e| {
