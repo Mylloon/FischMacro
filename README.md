@@ -1,9 +1,9 @@
 # Fischy
 
-This is a rewrite of the
-[polyvalent macro of Cweamy](https://github.com/Cweamy/Fisch-Cream-s-Macro) to make it
-cross-platform.
+This is a rewrite of [Cweamy's macro](https://github.com/Cweamy/Fisch-Cream-s-Macro).
 
-## Build dependencies
+- Linux support (even cross-platform!)
 
-- Linux : `-devel` packages of `dbus`, `pipewire`, `libinput`, `libxkbcommon` and `clang`
+## Download
+
+- See [release page](https://git.mylloon.fr/Anri/Fischy/releases)

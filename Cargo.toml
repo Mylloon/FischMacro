@@ -3,34 +3,29 @@ name = "fischy"
 version = "0.1.0"
 edition = "2024"
 authors = ["Mylloon"]
-description = "Macro for Fisch game"
+description = "Macro for the 'Fisch' roblox game"
 readme = "README.md"
 repository = "https://git.mylloon.fr/Anri/Fischy"
 publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
-simple_logger = "5.1.0"
-log = "0.4"
+clap = { version = "4.5.54", features = ["derive"] }
 enigo = { version = "0.6", features = ["wayland"] }
+env_logger = "0.11.8"
 image = "0.25"
+log = "0.4"
 rand = "0.9"
-sysinfo = "0.37"
+rdev = { git = "https://github.com/Narsil/rdev", rev="c14f2dc", features = ["wayland"] }
 scap = { git = "https://github.com/Mylloon/scap", branch="0.0.8-with-windows-send" }
-rdev = { git = "https://github.com/Narsil/rdev", rev="c14f2dc", version = "0.6.0", features = ["wayland"] }
+sysinfo = "0.37"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tempfile = "3.24"
 uuid = { version = "1.19", features = ["v4", "fast-rng"] }
 
-
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-cast_possible_wrap = "allow"
-cast_sign_loss = "allow"
-cast_possible_truncation =  "allow"
-cast_precision_loss = "allow"
-too_many_lines = "allow"
 
 [profile.release]
 strip = "symbols"

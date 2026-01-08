@@ -16,16 +16,16 @@ use crate::utils::kwin::{search_windows_kde, window_activate_kde};
 
 mod utils;
 
-pub use crate::utils::geometry;
+pub use crate::utils::{colors, geometry, helpers};
 
 #[must_use]
 #[cfg(target_os = "linux")]
-pub fn get_roblox<'a>() -> &'a str {
+pub fn get_roblox_executable_name<'a>() -> &'a str {
     "sober"
 }
 
 #[cfg(target_os = "windows")]
-pub fn get_roblox<'a>() -> &'a str {
+pub fn get_roblox_executable_name<'a>() -> &'a str {
     "RobloxPlayerBeta.exe"
 }
 

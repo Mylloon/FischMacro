@@ -2,56 +2,60 @@ use std::process::exit;
 use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
 
+use clap::Parser;
 use enigo::{
     Button,
     Coordinate::Abs,
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
+use fischy::colors::{COLOR_BAR, COLOR_FISH, COLOR_WHITE, ColorTarget};
 use fischy::geometry::{Dimensions, Point, Region};
-use fischy::get_roblox;
+use fischy::get_roblox_executable_name;
+use fischy::helpers::BadCast;
 use fischy::{ScreenRecorder, check_running, raise};
 use image::{Rgb, RgbImage};
 use log::{error, info, warn};
 use rand::Rng;
 use rdev::EventType::KeyPress;
 use rdev::{Event, Key, listen};
-use simple_logger::SimpleLogger;
 
-// Color targets
-struct ColorTarget {
-    color: Rgb<u8>,
-    variation: u8,
+#[derive(Parser)]
+#[command(
+    version,
+    about,
+    long_about = r#"
+To make this program work:
+    - hide the quest (top-right book button) and scoreboard (tab)
+    - be sure to run Roblox maximised on your primary screen"#
+)]
+struct Args {
+    /// Write images for debugging purposes
+    #[arg(long, default_value_t = false)]
+    debug: bool,
 }
 
-impl ColorTarget {
-    fn matches(&self, pixel: Rgb<u8>) -> bool {
-        let Rgb([tr, tg, tb]) = self.color;
-        let v = i16::from(self.variation);
-
-        (i16::from(pixel[0]) - i16::from(tr)).abs() <= v
-            && (i16::from(pixel[1]) - i16::from(tg)).abs() <= v
-            && (i16::from(pixel[2]) - i16::from(tb)).abs() <= v
+fn init_logger(debug_mode: bool) {
+    let mut builder = env_logger::Builder::new();
+    if debug_mode {
+        builder.filter_level(log::LevelFilter::Info);
+    } else {
+        builder.filter_level(log::LevelFilter::Warn);
     }
+    builder.init();
 }
 
 fn main() {
-    SimpleLogger::new()
-        .with_level(log::LevelFilter::Info)
-        .init()
-        .unwrap_or_else(|err| eprintln!("Failed initialize logger: {err}"));
-    info!("Starting Roblox Fishing Macro");
+    let args = Args::parse();
+    init_logger(args.debug);
 
-    // Notice
-    warn!(
-        r"To make this program work:
-                                        - hide the quest (top-right book button).
-                                        - be sure to run Roblox maximised on your primary screen
-                                        - if asked, share your whole screen"
-    );
+    info!("Starting Roblox Fishing Macro");
+    if args.debug {
+        info!("== Debug mode enabled ==");
+    }
 
     // Check that Roblox is running
-    let roblox = get_roblox();
+    let roblox = get_roblox_executable_name();
     assert!(check_running(roblox), "Roblox not found.");
     info!("Roblox found.");
 
@@ -59,42 +63,6 @@ fn main() {
         Ok(()) => info!("Raised Roblox window"),
         Err(err) => warn!("Failed raising roblox window: {err}"),
     }
-
-    // Define color targets
-    let color_fish = vec![
-        ColorTarget {
-            color: Rgb([0x43, 0x4b, 0x5b]),
-            variation: 3,
-        },
-        ColorTarget {
-            color: Rgb([0x4a, 0x4a, 0x5c]),
-            variation: 4,
-        },
-        ColorTarget {
-            color: Rgb([0x47, 0x51, 0x5d]),
-            variation: 4,
-        },
-    ];
-
-    let color_white = vec![ColorTarget {
-        color: Rgb([0xff, 0xff, 0xff]),
-        variation: 15,
-    }];
-
-    let color_bar = vec![
-        ColorTarget {
-            color: Rgb([0x84, 0x85, 0x87]),
-            variation: 4,
-        },
-        ColorTarget {
-            color: Rgb([0x78, 0x77, 0x73]),
-            variation: 4,
-        },
-        ColorTarget {
-            color: Rgb([0x7a, 0x78, 0x73]),
-            variation: 4,
-        },
-    ];
 
     // Register keybinds to close the script
     register_keybinds();
@@ -150,29 +118,29 @@ fn main() {
 
         // Find fish and white markers
         if let (Some(_), Some(_)) = (
-            search_color(&screen, &color_fish, &mini_game_region),
-            search_color(&screen, &color_white, &mini_game_region),
+            search_color(&screen, COLOR_FISH, &mini_game_region),
+            search_color(&screen, COLOR_WHITE, &mini_game_region),
         ) {
             // Initialize control width if not set
             if rod_control_window_width.is_none() {
                 rod_control_window_width = Some(
-                    calculate_control_width(&screen, &mini_game_region)
-                        .unwrap_or((mini_game_region.get_size().width as f32 * 0.12) as i32),
+                    calculate_control_width(&screen, &mini_game_region).unwrap_or(
+                        (mini_game_region.get_size().width.cast_signed().bad_cast() * 0.12)
+                            .bad_cast(),
+                    ),
                 );
             }
-
-            let control_val = rod_control_window_width.unwrap_or_default();
 
             // Main fishing logic loop
             info!("Fishing...");
             fishing_loop(
                 &mut enigo,
                 &mut recorder,
-                &color_fish,
-                &color_bar,
-                &color_white,
+                COLOR_FISH,
+                COLOR_BAR,
+                COLOR_WHITE,
                 &mini_game_region,
-                control_val,
+                rod_control_window_width.unwrap_or_default(),
                 &screen_dim,
             );
             info!("Fishing ended!");
@@ -204,7 +172,7 @@ fn search_color(screen: &RgbImage, targets: &[ColorTarget], region: &Region) -> 
     None
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn fishing_loop(
     enigo: &mut Enigo,
     recorder: &mut ScreenRecorder,
@@ -216,10 +184,10 @@ fn fishing_loop(
     screen_dim: &Dimensions,
 ) {
     warn!("init with c={control_val}");
-    // let [width, height] = mini_game_region.get_size();
-    // let screen_dim = ScreenDimensions { width, height };
     loop {
-        let screen = recorder.take_screenshot().unwrap();
+        let screen = recorder
+            .take_screenshot()
+            .expect("Couldn't take screenshot");
 
         // Get current fish position
         let fish_x =
@@ -233,14 +201,16 @@ fn fishing_loop(
             };
 
         // Check if fish is very far left or very far right
-        if fish_x < mini_game_region.point1.x.cast_signed() + (control_val as f32 * 0.8) as i32 {
+        if fish_x
+            < mini_game_region.point1.x.cast_signed() + (control_val.bad_cast() * 0.8).bad_cast()
+        {
             info!("Giving some slack...");
             enigo
                 .button(Button::Left, Release)
                 .expect("Failed giving slack");
             continue;
         } else if fish_x
-            > mini_game_region.point2.x.cast_signed() - (control_val as f32 * 0.8) as i32
+            > mini_game_region.point2.x.cast_signed() - (control_val.bad_cast() * 0.8).bad_cast()
         {
             info!("Tighting the line...");
             enigo
@@ -253,7 +223,7 @@ fn fishing_loop(
         let bar_pos = if let Some(white_pos) =
             search_color(&screen, color_white, mini_game_region).map(|p| p.x.cast_signed())
         {
-            white_pos + (control_val as f32 * 0.5) as i32
+            white_pos + (control_val.bad_cast() * 0.5).bad_cast()
         } else if let Some(bar_pos) =
             search_color(&screen, color_bar, mini_game_region).map(|p| p.x.cast_signed())
         {
@@ -292,7 +262,9 @@ fn fishing_loop(
                     let hold_time = hold_formula(range, &mini_game_region.get_size());
 
                     info!("found fish at {fish_x} - range is {range} - will hold for {hold_time}");
-                    if hold_timer.elapsed() >= Duration::from_millis(hold_time as u64) {
+                    if hold_timer.elapsed()
+                        >= Duration::from_millis(hold_time.cast_unsigned().into())
+                    {
                         success = true;
                         break;
                     }
@@ -306,7 +278,7 @@ fn fishing_loop(
                         break;
                     }
                 } else {
-                    info!("did not foud any fish");
+                    info!("did not found any fish");
                     break;
                 }
             }
@@ -315,21 +287,31 @@ fn fishing_loop(
                 .button(Button::Left, Release)
                 .expect("Releasing after losing fish failed");
             if success {
-                sleep(Duration::from_millis(
-                    (hold_timer.elapsed().as_millis() as f64 * 0.6) as u64,
-                ));
+                sleep(Duration::from_millis(u64::from(
+                    (i32::try_from(hold_timer.elapsed().as_millis())
+                        .unwrap_or_default()
+                        .bad_cast()
+                        * 0.6)
+                        .bad_cast()
+                        .cast_unsigned(),
+                )));
             }
         } else {
             info!("==> vers la gauche!");
             // Negative range handling
             let hold_timer = Instant::now();
-            enigo.button(Button::Left, Release).unwrap();
+            enigo
+                .button(Button::Left, Release)
+                .expect("Can't release click");
             let range_abs = range.abs();
             let mut continue_now = false;
 
             // Wait proportionally to the range
-            let wait_time =
-                (hold_formula(range_abs, &mini_game_region.get_size()) as f32 * 0.7) as u64;
+            let wait_time: u64 = (hold_formula(range_abs, &mini_game_region.get_size()).bad_cast()
+                * 0.7)
+                .bad_cast()
+                .try_into()
+                .unwrap_or_default();
             if wait_for_time(recorder, mini_game_region, wait_time, color_fish) {
                 continue;
             }
@@ -356,7 +338,8 @@ fn fishing_loop(
                 if let Some(current_bar_pos) =
                     search_color(&screen, color_bar, mini_game_region).map(|p| p.x.cast_signed())
                 {
-                    let adjusted_pos = current_bar_pos - (screen_dim.width as f32 * 0.04) as i32;
+                    let adjusted_pos = current_bar_pos
+                        - (screen_dim.width.cast_signed().bad_cast() * 0.04).bad_cast();
                     if adjusted_pos
                         <= fish_pos
                             .map(|p| p.x.cast_signed())
@@ -376,7 +359,7 @@ fn fishing_loop(
             wait_for_time(
                 recorder,
                 mini_game_region,
-                hold_timer.elapsed().as_millis() as u64,
+                u64::try_from(hold_timer.elapsed().as_millis()).unwrap_or_default(),
                 color_fish,
             );
             enigo
@@ -409,12 +392,20 @@ fn reels(enigo: &mut Enigo, last_shake_time: &mut Instant) {
 fn calculate_mini_game_region(screen_dim: &Dimensions) -> Region {
     Region {
         point1: Point {
-            x: (screen_dim.width as f32 * 0.28) as u32,
-            y: (screen_dim.height as f32 * 0.8) as u32,
+            x: (screen_dim.width.cast_signed().bad_cast() * 0.28)
+                .bad_cast()
+                .cast_unsigned(),
+            y: (screen_dim.height.cast_signed().bad_cast() * 0.8)
+                .bad_cast()
+                .cast_unsigned(),
         },
         point2: Point {
-            x: (screen_dim.width as f32 * 0.72) as u32,
-            y: (screen_dim.height as f32 * 0.85) as u32,
+            x: (screen_dim.width.cast_signed().bad_cast() * 0.72)
+                .bad_cast()
+                .cast_unsigned(),
+            y: (screen_dim.height.cast_signed().bad_cast() * 0.85)
+                .bad_cast()
+                .cast_unsigned(),
         },
     }
 }
@@ -423,12 +414,20 @@ fn calculate_mini_game_region(screen_dim: &Dimensions) -> Region {
 fn calculate_shake_region(screen_dim: &Dimensions) -> Region {
     Region {
         point1: Point {
-            x: (screen_dim.width as f32 * 0.005) as u32,
-            y: (screen_dim.height as f32 * 0.185) as u32,
+            x: (screen_dim.width.cast_signed().bad_cast() * 0.005)
+                .bad_cast()
+                .cast_unsigned(),
+            y: (screen_dim.height.cast_signed().bad_cast() * 0.185)
+                .bad_cast()
+                .cast_unsigned(),
         },
         point2: Point {
-            x: (screen_dim.width as f32 * 0.84) as u32,
-            y: (screen_dim.height as f32 * 0.65) as u32,
+            x: (screen_dim.width.cast_signed().bad_cast() * 0.84)
+                .bad_cast()
+                .cast_unsigned(),
+            y: (screen_dim.height.cast_signed().bad_cast() * 0.65)
+                .bad_cast()
+                .cast_unsigned(),
         },
     }
 }
@@ -439,8 +438,8 @@ fn calculate_control_width(screen: &RgbImage, region: &Region) -> Option<i32> {
     let middle_y = y_min + (y_max - y_min) / 2;
 
     let is_white = |x: i32| {
-        (0..screen.width() as i32).contains(&x) && {
-            let p = screen.get_pixel(x as u32, middle_y as u32);
+        (0..screen.width().cast_signed()).contains(&x) && {
+            let p = screen.get_pixel(x.cast_unsigned(), middle_y.cast_unsigned());
             p[0] > 234 && p[1] > 234 && p[2] > 234
         }
     };
@@ -453,7 +452,8 @@ fn calculate_control_width(screen: &RgbImage, region: &Region) -> Option<i32> {
 
 fn hold_formula(gap: i32, full_area: &Dimensions) -> i32 {
     info!("info: gap={gap} , w={}", full_area.width);
-    ((300. * gap as f32 / ((full_area.width as f32) * 0.5)) as i32).clamp(0, 2000)
+    ((300. * gap.bad_cast() / ((full_area.width.cast_signed().bad_cast()) * 0.5)).bad_cast())
+        .clamp(0, 2000)
 }
 
 /// Returns the coordinates of the shake bubble
@@ -479,7 +479,7 @@ fn check_shake(enigo: &mut Enigo, screen: &mut ScreenRecorder, region: &Region) 
 
     for y in y_min..=y_max {
         for x in x_min..=x_max {
-            let pixel = image.get_pixel(x as u32, y as u32);
+            let pixel = image.get_pixel(x.cast_unsigned(), y.cast_unsigned());
 
             // Check for white pixel (shake indicator)
             if white.matches(*pixel) {
