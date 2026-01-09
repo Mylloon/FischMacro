@@ -11,8 +11,6 @@ use scap::{
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
-#[cfg(target_os = "linux")]
-use crate::utils::kwin::{search_windows_kde, window_activate_kde};
 use crate::utils::{
     colors::ColorTarget,
     geometry::{Dimensions, Point, Region},
@@ -43,35 +41,6 @@ pub fn check_running(name: &str) -> bool {
     sys.processes()
         .values()
         .any(|process| process.name() == name)
-}
-
-/// Raise a window
-///
-/// # Errors
-/// Erroring if can't raise the asked program
-#[cfg(target_os = "linux")]
-pub fn raise(program: &str) -> Result<(), String> {
-    // KDE specific
-    if is_kde() {
-        search_windows_kde(program)
-            .and_then(|s| window_activate_kde(&s))
-            // TODO...
-            .map_err(|err| format!("Something went wrong: {err:#?}."))
-    } else {
-        Err("Only KDE Plasma is supported on Linux.".into())
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub fn raise(_program: &str) -> Result<(), String> {
-    Err("Windows is not currently supported".into())
-}
-
-#[cfg(target_os = "linux")]
-fn is_kde() -> bool {
-    std::env::var("DESKTOP_SESSION")
-        .map(|v| v.eq("plasma"))
-        .unwrap_or(false)
 }
 
 pub struct ScreenRecorder {

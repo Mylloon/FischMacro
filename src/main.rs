@@ -14,13 +14,14 @@ use fischy::colors::{COLOR_FISH, COLOR_HOOK, COLOR_WHITE, ColorTarget};
 use fischy::fishing::Rod;
 use fischy::geometry::{Dimensions, Point, Region};
 use fischy::helpers::BadCast;
-use fischy::{ScreenRecorder, check_running, raise};
+use fischy::{ScreenRecorder, check_running};
 use fischy::{get_roblox_executable_name, search_color_ltr};
 use image::Rgb;
 use log::{debug, info, warn};
 use rand::Rng;
 use rdev::EventType::KeyPress;
 use rdev::{Event, Key, listen};
+use window_raiser::raise;
 
 #[derive(Parser)]
 #[command(
@@ -468,4 +469,9 @@ fn register_keybinds() {
 // /// Close chat if open
 // fn chat_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
 //     todo!("Check if chat is open => Close it by pressing the button")
+// }
+
+// /// Close if server have shutdown
+// fn server_alive_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
+//     todo!("Check if popup in the center => Exit the program in this case")
 // }
