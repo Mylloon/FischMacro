@@ -13,10 +13,14 @@ use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
 #[cfg(target_os = "linux")]
 use crate::utils::kwin::{search_windows_kde, window_activate_kde};
+use crate::utils::{
+    colors::ColorTarget,
+    geometry::{Point, Region},
+};
 
 mod utils;
 
-pub use crate::utils::{colors, geometry, helpers};
+pub use crate::utils::{args, colors, fishing, geometry, helpers};
 
 #[must_use]
 #[cfg(target_os = "linux")]
@@ -218,4 +222,23 @@ impl ScreenRecorder {
             })
             .and_then(|f| f.ok_or("Can't convert image from raw data".into()))
     }
+}
+
+/// Search a specific colors in the region from left to right
+///
+/// # Panics
+/// tmps
+#[must_use]
+pub fn search_color_ltr(
+    screen: &RgbImage,
+    targets: &[ColorTarget],
+    region: &Region,
+) -> Option<Point> {
+    let [x_min, y_min, x_max, y_max] = region.corners();
+
+    let y = y_min.midpoint(y_max);
+
+    (x_min..=x_max)
+        .find(|&x| targets.iter().any(|t| t.matches(*screen.get_pixel(x, y))))
+        .map(|x| Point { x, y })
 }

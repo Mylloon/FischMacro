@@ -37,7 +37,7 @@ pub static COLOR_WHITE: &[ColorTarget] = &[ColorTarget {
     variation: 15,
 }];
 
-pub static COLOR_BAR: &[ColorTarget] = &[
+pub static COLOR_HOOK: &[ColorTarget] = &[
     ColorTarget {
         color: Rgb([0x84, 0x85, 0x87]),
         variation: 4,
