@@ -15,7 +15,7 @@ use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use crate::utils::kwin::{search_windows_kde, window_activate_kde};
 use crate::utils::{
     colors::ColorTarget,
-    geometry::{Point, Region},
+    geometry::{Dimensions, Point, Region},
 };
 
 mod utils;
@@ -77,8 +77,7 @@ fn is_kde() -> bool {
 pub struct ScreenRecorder {
     old_frame: Arc<Mutex<Frame>>,
 
-    pub width: u32,
-    pub height: u32,
+    pub dimensions: Dimensions,
 }
 
 impl ScreenRecorder {
@@ -153,8 +152,7 @@ impl ScreenRecorder {
 
         Ok(Self {
             old_frame,
-            width,
-            height,
+            dimensions: Dimensions { width, height },
         })
     }
 

@@ -92,23 +92,19 @@ fn main() {
     let mut enigo = Enigo::new(&Settings::default()).expect("Failed to initialize I/O engine");
     let mut recorder = ScreenRecorder::new().expect("Failed to initialize screen monitoring");
 
-    // Get screen dimensions
-    let screen_dim = Dimensions {
-        width: recorder.width,
-        height: recorder.height,
-    };
     info!(
         "Detected screen dimensions: {}x{}",
-        screen_dim.width, screen_dim.height
+        recorder.dimensions.width, recorder.dimensions.height
     );
 
     // scoreboard_check(&mut enigo, &mut recorder);
     // chat_check(&mut enigo, &mut recorder);
 
     // Calculate regions based on screen dimensions
-    let mini_game_region = screen_dim.calculate_mini_game_region();
-    let shake_region = screen_dim.calculate_shake_region();
-    let safe_point = screen_dim
+    let mini_game_region = recorder.dimensions.calculate_mini_game_region();
+    let shake_region = recorder.dimensions.calculate_shake_region();
+    let safe_point = recorder
+        .dimensions
         .calculate_safe_point(&vec![&mini_game_region, &shake_region])
         .expect("Couldn't find any safe point, no region found.");
 
@@ -230,7 +226,7 @@ fn fishing_loop(
         {
             x.cast_signed()
         } else {
-            warn!("The bite is over");
+            info!("The bite is over");
             enigo.button(Button::Left, Release).expect("Packup the rod");
             break;
         };
@@ -277,10 +273,10 @@ fn fishing_loop(
         );
 
         if range >= 0 {
-            info!("==> vers la droite!");
+            info!("==> To the right! ==>");
             enigo.button(Button::Left, Press).expect("Clicking failed");
         } else {
-            info!("<== vers la gauche!");
+            info!("<== To the left! <==");
             enigo
                 .button(Button::Left, Release)
                 .expect("Releasing failed");
@@ -341,11 +337,11 @@ fn reels(
 /// Determine how long we should hold the line in milliseconds
 /// based on distances between the fish and the middle of the hook
 fn hold_formula(gap: i32, full_area: &Dimensions) -> u32 {
-    let multiplicator = 1400. + if gap > 0 { 500. } else { 0. };
+    let multiplicator = 1600. + if gap > 0 { 500. } else { 0. };
 
     (((multiplicator * gap.abs().bad_cast() / (full_area.width.cast_signed().bad_cast()))
         .bad_cast())
-    .clamp(20, 2000))
+    .clamp(100, 2000))
     .cast_unsigned()
 }
 
@@ -434,11 +430,12 @@ fn wait_until(
                 Some(x)
                     if x >= hook_position.absolute_beg_x
                         && x <= hook_position.absolute_end_x
-                        && now < acceptable =>
+                        && now >= acceptable =>
                 {
+                    info!("Fish is in the range and we waited long enough");
                     return;
                 }
-                _ => {}
+                _ => { /* Keep waiting */ }
             }
         }
     }

@@ -1,3 +1,5 @@
+use crate::fishing::Rod;
+
 /// Parse rod control
 ///
 /// # Errors
@@ -7,8 +9,7 @@ pub fn rod_control_parser(s: &str) -> Result<f32, String> {
         .parse()
         .map_err(|_| format!("`{s}` is not a valid number"))?;
 
-    let min = 0.;
-    let max = 0.7;
+    let (min, max) = Rod::get_min_max_control_values();
     if (min..=max).contains(&val) {
         Ok(val)
     } else {

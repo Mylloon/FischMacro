@@ -1,5 +1,5 @@
 use image::{Rgb, RgbImage};
-use log::{info, warn};
+use log::{trace, warn};
 
 use crate::{colors::ColorTarget, geometry::Region, helpers::BadCast, search_color_ltr};
 
@@ -47,6 +47,13 @@ impl Rod {
         }
     }
 
+    /// Returns min & max theorical control values
+    #[must_use]
+    pub fn get_min_max_control_values() -> (f32, f32) {
+        // Default value (0) is 30% width bar
+        (-0.3, 0.7)
+    }
+
     /// Find the width of the hook
     ///
     /// NOTE: Works only when fish is on the hook (e.g. at the very start of the fishing process)
@@ -88,7 +95,7 @@ impl Rod {
                     .cast_unsigned())
             },
             |e| {
-                warn!("Found perfect length: {e}");
+                warn!("Found hook: using {e} as length");
                 Ok(e.cast_unsigned())
             },
         )
@@ -113,20 +120,18 @@ impl Rod {
         let hook_pos = if let Some(pos) =
             search_color_ltr(image, color_white, mini_game_region).map(|p| p.x)
         {
-            info!("Hook found with fish in it");
+            trace!("Hook found with fish in it");
             // Fish in the hook
             Some(pos)
         } else if let Some(pos) = search_color_ltr(image, color_hook, mini_game_region).map(|p| p.x)
         {
-            info!("Hook found but fish is not in it");
+            trace!("Hook found but fish is not in it");
             // Fish outside of the hook
             Some(pos)
         } else {
-            info!("Hook not found");
+            trace!("Hook not found");
             None
         };
-
-        info!("raw hook pos: {hook_pos:?}");
 
         self.internals.position = hook_pos.map(|p| HookPosition {
             absolute_beg_x: p,
