@@ -16,9 +16,7 @@ use crate::utils::{
     geometry::{Dimensions, Point, Region},
 };
 
-mod utils;
-
-pub use crate::utils::{args, colors, fishing, geometry, helpers};
+pub mod utils;
 
 #[must_use]
 #[cfg(target_os = "linux")]

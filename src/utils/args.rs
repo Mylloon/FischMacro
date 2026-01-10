@@ -1,4 +1,4 @@
-use crate::fishing::Rod;
+use crate::utils::fishing::Rod;
 
 /// Parse rod control
 ///

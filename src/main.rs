@@ -9,18 +9,18 @@ use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
-use fischy::args::rod_control_parser;
-use fischy::colors::{COLOR_FISH, COLOR_HOOK, COLOR_WHITE, ColorTarget};
-use fischy::fishing::Rod;
-use fischy::geometry::{Dimensions, Point, Region};
-use fischy::helpers::BadCast;
-use fischy::{ScreenRecorder, check_running};
-use fischy::{get_roblox_executable_name, search_color_ltr};
+use fischy::utils::{
+    args::rod_control_parser,
+    colors::{COLOR_FISH, COLOR_HOOK, COLOR_WHITE, ColorTarget},
+    fishing::Rod,
+    geometry::{Dimensions, Point, Region},
+    helpers::BadCast,
+};
+use fischy::{ScreenRecorder, check_running, get_roblox_executable_name, search_color_ltr};
 use image::Rgb;
 use log::{debug, info, warn};
 use rand::Rng;
-use rdev::EventType::KeyPress;
-use rdev::{Event, Key, listen};
+use rdev::{Event, EventType::KeyPress, Key, listen};
 use window_raiser::raise;
 
 #[derive(Parser)]
@@ -33,9 +33,9 @@ To make this program work:
     - be sure to run Roblox maximised on your primary screen"#
 )]
 struct Args {
-    /// Write images for debugging purposes
-    #[arg(long, default_value_t = false)]
-    debug: bool,
+    /// Debugging purposes
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
 
     /// Sleep between shakes to prevent capturing the cursor
     #[cfg(target_os = "linux")]
@@ -52,9 +52,9 @@ struct Args {
 }
 
 /// Init logger based on debug level
-fn init_logger(debug_mode: bool) {
+fn init_logger(verbose: bool) {
     let mut builder = env_logger::Builder::new();
-    if debug_mode {
+    if verbose {
         builder.filter_level(log::LevelFilter::Info);
     } else {
         builder.filter_level(log::LevelFilter::Warn);
@@ -64,10 +64,10 @@ fn init_logger(debug_mode: bool) {
 
 fn pre_init() -> Args {
     let args = Args::parse();
-    init_logger(args.debug);
+    init_logger(args.verbose);
 
     info!("Starting Roblox Fishing Macro");
-    if args.debug {
+    if args.verbose {
         info!("== Debug mode enabled ==");
     }
 
@@ -78,7 +78,12 @@ fn pre_init() -> Args {
 
     match raise(roblox) {
         Ok(()) => info!("Raised Roblox window"),
-        Err(err) => warn!("Failed raising roblox window: {err}"),
+        Err(err) => {
+            warn!("Failed raising roblox window: {err}");
+            let wait = 3;
+            warn!("You have to focus it yourself (waiting {wait} seconds).");
+            sleep(Duration::from_secs(wait));
+        }
     }
 
     // Register keybinds to close the script
@@ -109,22 +114,55 @@ fn main() {
         .calculate_safe_point(&vec![&mini_game_region, &shake_region])
         .expect("Couldn't find any safe point, no region found.");
 
-    // Initial reel
+    #[cfg(feature = "imageproc")]
+    {
+        use fischy::utils::debug::Drawable;
+        use std::sync::Arc;
+
+        let img = Arc::new(
+            recorder
+                .take_screenshot()
+                .expect("Couldn't take screenshot"),
+        );
+
+        mini_game_region
+            .clone()
+            .draw_async(img.clone(), "mini_game.png");
+        shake_region
+            .clone()
+            .draw_async(img.clone(), "shake_region.png");
+        safe_point.clone().draw_async(img, "safe_point.png");
+    }
+
+    macro_loop(
+        &mut enigo,
+        &mut recorder,
+        &safe_point,
+        &mini_game_region,
+        &shake_region,
+        &args,
+    );
+}
+
+/// Shake the rod and catch fishes
+fn macro_loop(
+    enigo: &mut Enigo,
+    recorder: &mut ScreenRecorder,
+    safe_point: &Point,
+    mini_game_region: &Region,
+    shake_region: &Region,
+    args: &Args,
+) {
     let mut last_shake_time = Instant::now();
     let mut shake_count = 0;
-    reels(
-        &mut enigo,
-        &mut last_shake_time,
-        &mut shake_count,
-        &safe_point,
-    );
+
+    // Initial reel
+    reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
 
     let mut rod = None;
     loop {
         // Check for shake
-        if let Some(Point { x, y }) =
-            check_shake(&mut enigo, &mut recorder, &shake_region, &safe_point, &args)
-        {
+        if let Some(Point { x, y }) = check_shake(enigo, recorder, shake_region, safe_point, args) {
             // Click at the shake position
             info!("Shake @ ({x}, {y})");
             enigo
@@ -137,12 +175,7 @@ fn main() {
 
             // Too much tries
             if shake_count > args.max_shake_count {
-                reels(
-                    &mut enigo,
-                    &mut last_shake_time,
-                    &mut shake_count,
-                    &safe_point,
-                );
+                reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
                 continue;
             }
 
@@ -153,12 +186,7 @@ fn main() {
 
         // Timeout
         if last_shake_time.elapsed() > Duration::from_secs(5) {
-            reels(
-                &mut enigo,
-                &mut last_shake_time,
-                &mut shake_count,
-                &safe_point,
-            );
+            reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
             continue;
         }
 
@@ -169,14 +197,14 @@ fn main() {
 
         // Find fish and white markers
         if let (Some(_), Some(_)) = (
-            search_color_ltr(&screen, COLOR_FISH, &mini_game_region),
-            search_color_ltr(&screen, COLOR_WHITE, &mini_game_region),
+            search_color_ltr(&screen, COLOR_FISH, mini_game_region),
+            search_color_ltr(&screen, COLOR_WHITE, mini_game_region),
         ) {
             // Initialize hook if not set
             if rod.is_none() {
                 rod = Some(Rod::new(
                     &screen,
-                    &mini_game_region,
+                    mini_game_region,
                     args.rod_control_minimal,
                 ));
             }
@@ -184,24 +212,19 @@ fn main() {
             // Main fishing logic loop
             info!("Fishing...");
             fishing_loop(
-                &mut enigo,
-                &mut recorder,
+                enigo,
+                recorder,
                 COLOR_FISH,
                 COLOR_HOOK,
                 COLOR_WHITE,
-                &mini_game_region,
+                mini_game_region,
                 rod.as_mut().expect("No hook found"),
             );
             info!("Fishing ended!");
 
             // After fishing interaction, reel again
             sleep(Duration::from_secs(2));
-            reels(
-                &mut enigo,
-                &mut last_shake_time,
-                &mut shake_count,
-                &safe_point,
-            );
+            reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
         }
     }
 }
@@ -356,7 +379,7 @@ fn check_shake(
 ) -> Option<Point> {
     let [x_min, y_min, x_max, y_max] = region.corners().map(u32::cast_signed);
 
-    // Move cursor out of the region (Sober creating a custom cursor)
+    // Move cursor out of the region (Sober creates a custom cursor)
     #[cfg(target_os = "linux")]
     {
         enigo

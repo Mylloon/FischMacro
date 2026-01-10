@@ -1,7 +1,10 @@
 use image::{Rgb, RgbImage};
 use log::{trace, warn};
 
-use crate::{colors::ColorTarget, geometry::Region, helpers::BadCast, search_color_ltr};
+use crate::{
+    search_color_ltr,
+    utils::{colors::ColorTarget, geometry::Region, helpers::BadCast},
+};
 
 #[derive(Clone)]
 pub struct HookPosition {

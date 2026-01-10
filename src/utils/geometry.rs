@@ -1,11 +1,13 @@
-use crate::helpers::BadCast;
+use crate::utils::helpers::BadCast;
 
+#[derive(Clone)]
 pub struct Point {
     pub x: u32,
     pub y: u32,
 }
 
 /// Area from point 1 to point 2
+#[derive(Clone)]
 pub struct Region {
     pub point1: Point,
     pub point2: Point,
