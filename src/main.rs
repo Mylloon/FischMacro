@@ -1,5 +1,6 @@
-use std::process::exit;
-use std::thread::{sleep, spawn};
+use std::ops::AddAssign;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -16,12 +17,16 @@ use fischy::utils::{
     geometry::{Dimensions, Point, Region},
     helpers::BadCast,
 };
-use fischy::{ScreenRecorder, check_running, get_roblox_executable_name, search_color_ltr};
+use fischy::{
+    ScreenRecorder, Stats, check_running, get_roblox_executable_name, search_color_ltr, sleep,
+};
 use image::Rgb;
 use log::{debug, info, warn};
 use rand::Rng;
 use rdev::{Event, EventType::KeyPress, Key, listen};
 use window_raiser::raise;
+
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Parser)]
 #[command(
@@ -33,22 +38,30 @@ To make this program work:
     - be sure to run Roblox maximised on your primary screen"#
 )]
 struct Args {
-    /// Debugging purposes
-    #[arg(short, long, default_value_t = false)]
-    verbose: bool,
-
     /// Sleep between shakes to prevent capturing the cursor
     #[cfg(target_os = "linux")]
     #[arg(long, default_value_t = 300)]
     lag: u64,
 
-    /// Sleep between shakes to prevent capturing the cursor
+    /// Maximum shake count
     #[arg(short, long, default_value_t = 20)]
     max_shake_count: u8,
 
     /// Minimum control value for the rod you're using (beware as it is not 100% accurate)
     #[arg(short, long, default_value_t = 0., value_parser = rod_control_parser)]
     rod_control_minimal: f32,
+
+    /// Do only the shake part
+    #[arg(long, default_value_t = false)]
+    shake_only: bool,
+
+    /// Compute and print stats
+    #[arg(short, long, default_value_t = false)]
+    stats: bool,
+
+    /// Debugging purposes
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 /// Init logger based on debug level
@@ -82,7 +95,7 @@ fn pre_init() -> Args {
             warn!("Failed raising roblox window: {err}");
             let wait = 3;
             warn!("You have to focus it yourself (waiting {wait} seconds).");
-            sleep(Duration::from_secs(wait));
+            sleep(Duration::from_secs(wait), &SHUTDOWN);
         }
     }
 
@@ -134,6 +147,8 @@ fn main() {
         safe_point.clone().draw_async(img, "safe_point.png");
     }
 
+    let mut stats = Stats::new(args.stats);
+
     macro_loop(
         &mut enigo,
         &mut recorder,
@@ -141,7 +156,10 @@ fn main() {
         &mini_game_region,
         &shake_region,
         &args,
+        &mut stats,
     );
+
+    stats.print();
 }
 
 /// Shake the rod and catch fishes
@@ -152,15 +170,22 @@ fn macro_loop(
     mini_game_region: &Region,
     shake_region: &Region,
     args: &Args,
+    stats: &mut Stats,
 ) {
     let mut last_shake_time = Instant::now();
     let mut shake_count = 0;
 
     // Initial reel
-    reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
+    reels(
+        enigo,
+        &mut last_shake_time,
+        &mut shake_count,
+        safe_point,
+        stats,
+    );
 
     let mut rod = None;
-    loop {
+    while !SHUTDOWN.load(Ordering::Relaxed) {
         // Check for shake
         if let Some(Point { x, y }) = check_shake(enigo, recorder, shake_region, safe_point, args) {
             // Click at the shake position
@@ -168,14 +193,22 @@ fn macro_loop(
             enigo
                 .move_mouse(x.cast_signed(), y.cast_signed(), Abs)
                 .expect("Failed moving mouse to shake bubble");
-            sleep(Duration::from_millis(100)); // we may move the mouse too fast
+            sleep(Duration::from_millis(100), &SHUTDOWN); // we may move the mouse too fast
             enigo
                 .button(Button::Left, Click)
                 .expect("Failed clicking to shake bubble");
 
+            stats.shakes.add_assign(1);
+
             // Too much tries
             if shake_count > args.max_shake_count {
-                reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
+                reels(
+                    enigo,
+                    &mut last_shake_time,
+                    &mut shake_count,
+                    safe_point,
+                    stats,
+                );
                 continue;
             }
 
@@ -186,7 +219,13 @@ fn macro_loop(
 
         // Timeout
         if last_shake_time.elapsed() > Duration::from_secs(5) {
-            reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
+            reels(
+                enigo,
+                &mut last_shake_time,
+                &mut shake_count,
+                safe_point,
+                stats,
+            );
             continue;
         }
 
@@ -214,44 +253,65 @@ fn macro_loop(
             fishing_loop(
                 enigo,
                 recorder,
-                COLOR_FISH,
-                COLOR_HOOK,
-                COLOR_WHITE,
+                &Colors {
+                    fish: COLOR_FISH,
+                    hook: COLOR_HOOK,
+                    white: COLOR_WHITE,
+                },
                 mini_game_region,
                 rod.as_mut().expect("No hook found"),
+                args,
+                stats,
             );
             info!("Fishing ended!");
 
             // After fishing interaction, reel again
-            sleep(Duration::from_secs(2));
-            reels(enigo, &mut last_shake_time, &mut shake_count, safe_point);
+            sleep(Duration::from_secs(2), &SHUTDOWN);
+            reels(
+                enigo,
+                &mut last_shake_time,
+                &mut shake_count,
+                safe_point,
+                stats,
+            );
         }
     }
+}
+
+struct Colors<'a> {
+    fish: &'a [ColorTarget],
+    hook: &'a [ColorTarget],
+    white: &'a [ColorTarget],
 }
 
 /// Catch a fish!
 fn fishing_loop(
     enigo: &mut Enigo,
     recorder: &mut ScreenRecorder,
-    color_fish: &[ColorTarget],
-    color_hook: &[ColorTarget],
-    color_white: &[ColorTarget],
+    colors: &Colors,
     mini_game_region: &Region,
     rod: &mut Rod,
+    args: &Args,
+    stats: &mut Stats,
 ) {
-    loop {
+    let loop_time = Instant::now();
+    while !SHUTDOWN.load(Ordering::Relaxed) {
         let screen = recorder
             .take_screenshot()
             .expect("Couldn't take screenshot");
 
         // Get current fish position
         let fish_x = if let Some(Point { x, .. }) =
-            search_color_ltr(&screen, color_fish, mini_game_region)
+            search_color_ltr(&screen, colors.fish, mini_game_region)
         {
+            if args.shake_only {
+                continue;
+            }
             x.cast_signed()
         } else {
             info!("The bite is over");
             enigo.button(Button::Left, Release).expect("Packup the rod");
+            stats.add_fishing_time(loop_time.elapsed().as_secs());
             break;
         };
 
@@ -274,7 +334,7 @@ fn fishing_loop(
             continue;
         }
 
-        let hook = rod.find_hook(&screen, color_hook, color_white, mini_game_region);
+        let hook = rod.find_hook(&screen, colors.hook, colors.white, mini_game_region);
 
         if !hook.fish_on {
             info!("Didn't find any color corresponding to the hook");
@@ -313,9 +373,9 @@ fn fishing_loop(
             recorder,
             mini_game_region,
             hold_time.into(),
-            color_fish,
-            color_hook,
-            color_white,
+            colors.fish,
+            colors.hook,
+            colors.white,
             rod,
         );
 
@@ -332,6 +392,7 @@ fn reels(
     last_shake_time: &mut Instant,
     shake_count: &mut u8,
     safe_point: &Point,
+    stats: &mut Stats,
 ) {
     // Move mouse
     enigo
@@ -342,17 +403,27 @@ fn reels(
     enigo
         .button(Button::Left, Click)
         .expect("Can't click before reel");
-    sleep(Duration::from_millis(rand::rng().random_range(60..=80)));
+    sleep(
+        Duration::from_millis(rand::rng().random_range(60..=80)),
+        &SHUTDOWN,
+    );
 
     println!("Reeling...");
     // Casting motion
     enigo
         .button(Button::Left, Press)
         .expect("Can't backswing: failed to press mouse button");
-    sleep(Duration::from_millis(rand::rng().random_range(600..=1200)));
+    sleep(
+        Duration::from_millis(rand::rng().random_range(600..=1200)),
+        &SHUTDOWN,
+    );
     enigo
         .button(Button::Left, Release)
         .expect("Can't release the line: failed to release mouse button");
+
+    if stats.enabled {
+        stats.reels.add_assign(1);
+    }
 
     *shake_count = 0;
     *last_shake_time = Instant::now();
@@ -386,7 +457,7 @@ fn check_shake(
             .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
             .expect("Can't move mouse");
         // Sleep to be sure the screenshot won't capture our cursor
-        sleep(Duration::from_millis(args.lag));
+        sleep(Duration::from_millis(args.lag), &SHUTDOWN);
     }
 
     let pure_white = ColorTarget {
@@ -425,7 +496,7 @@ fn wait_until(
 ) {
     let deadline = Instant::now() + Duration::from_millis(time_ms);
     let acceptable = Instant::now() + Duration::from_millis(time_ms / 2);
-    loop {
+    while !SHUTDOWN.load(Ordering::Relaxed) {
         let now = Instant::now();
         if now >= deadline {
             break;
@@ -469,7 +540,7 @@ fn wait_until(
 
 /// Register specific keypress that will stop the program
 fn register_keybinds() {
-    spawn(|| {
+    thread::spawn(|| {
         listen(|e| {
             if let Event {
                 event_type: KeyPress(Key::Escape | Key::Return | Key::Space),
@@ -477,7 +548,7 @@ fn register_keybinds() {
             } = e
             {
                 info!("Closing due to key press...");
-                exit(0)
+                SHUTDOWN.store(true, Ordering::Relaxed);
             }
         })
         .expect("Can't listen to keyboard");

@@ -1,6 +1,10 @@
 use std::{
-    sync::{Arc, Mutex},
-    thread::spawn,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 use image::RgbImage;
@@ -108,7 +112,7 @@ impl ScreenRecorder {
 
         // We have to create a thread that consume all our frames to prevent a memory explosion
         let frame_clone = Arc::clone(&old_frame);
-        spawn(move || {
+        thread::spawn(move || {
             while let Ok(frame) = capturer.get_next_frame() {
                 // Try to store the latest frame
                 if let Ok(mut guard) = frame_clone.try_lock() {
@@ -206,4 +210,74 @@ pub fn search_color_ltr(
     (x_min..=x_max)
         .find(|&x| targets.iter().any(|t| t.matches(*screen.get_pixel(x, y))))
         .map(|x| Point { x, y })
+}
+
+pub struct Stats {
+    pub enabled: bool,
+    /// Shake count
+    pub shakes: Box<u64>,
+    /// Reel count
+    pub reels: Box<u64>,
+    /// Fish count
+    fishes: Box<u64>,
+    /// Total fishing time in seconds
+    total_fishing_time: Box<u64>,
+    /// Maximum fishing time in seconds
+    max_fishing_time: Box<u64>,
+    /// Minimum fishing time in seconds
+    min_fishing_time: Box<u64>,
+}
+
+impl Stats {
+    #[must_use]
+    pub fn new(enabled: bool) -> Self {
+        Stats {
+            enabled,
+            reels: Box::new(0),
+            shakes: Box::new(0),
+            fishes: Box::new(0),
+            total_fishing_time: Box::new(0),
+            max_fishing_time: Box::new(u64::MIN),
+            min_fishing_time: Box::new(u64::MAX),
+        }
+    }
+
+    fn print_stats(self) {
+        println!("Shake count: {}", self.shakes);
+        println!("Reels tries count: {}", self.reels);
+        println!("Missed reels count: {}", *self.reels - *self.fishes);
+        println!("Fishes count: {}", self.fishes);
+        if *self.max_fishing_time != u64::MIN {
+            println!(
+                "Average fishing time: {}s (maximum was {}s, minimum was {}s)",
+                (*self.total_fishing_time / *self.reels),
+                self.max_fishing_time,
+                self.min_fishing_time
+            );
+        }
+    }
+
+    pub fn print(self) {
+        if self.enabled {
+            self.print_stats();
+        }
+    }
+
+    pub fn add_fishing_time(&mut self, time: u64) {
+        *self.fishes += 1;
+        *self.total_fishing_time += time;
+        *self.max_fishing_time = (*self.max_fishing_time).max(time);
+        *self.min_fishing_time = (*self.min_fishing_time).min(time);
+    }
+}
+
+/// Sleep for `duration`
+pub fn sleep(duration: Duration, cond: &AtomicBool) {
+    let chunk = Duration::from_millis(1);
+    let start = Instant::now();
+
+    while start.elapsed() < duration && !cond.load(Ordering::Relaxed) {
+        let remaining = duration.checked_sub(start.elapsed()).unwrap_or_default();
+        thread::sleep(if remaining < chunk { remaining } else { chunk });
+    }
 }
