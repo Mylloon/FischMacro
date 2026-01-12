@@ -267,7 +267,9 @@ impl Stats {
         *self.fishes += 1;
         *self.total_fishing_time += time;
         *self.max_fishing_time = (*self.max_fishing_time).max(time);
-        *self.min_fishing_time = (*self.min_fishing_time).min(time);
+        if time > 0 {
+            *self.min_fishing_time = (*self.min_fishing_time).min(time);
+        }
     }
 }
 

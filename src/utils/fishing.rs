@@ -31,13 +31,11 @@ pub struct Hook {
 pub struct Rod {
     internals: Hook,
     is_real_length: bool,
-    // /// https://fischipedia.org/wiki/Fishing_Rods#Control
-    pub control_percentage: i32,
 }
 
 impl Rod {
     #[must_use]
-    pub fn new(screen: &RgbImage, mini_game_region: &Region, control_minimal: f32) -> Self {
+    pub fn new(screen: &RgbImage, mini_game_region: &Region) -> Self {
         let length = Self::get_length(screen, mini_game_region);
         Rod {
             internals: Hook {
@@ -46,7 +44,6 @@ impl Rod {
                 fish_on: false,
             },
             is_real_length: length.is_ok(),
-            control_percentage: (100. * control_minimal + 30.).bad_cast(),
         }
     }
 

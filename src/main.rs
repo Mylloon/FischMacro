@@ -1,4 +1,5 @@
 use std::ops::AddAssign;
+use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -10,8 +11,8 @@ use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
+use fischy::utils::clickers::{fetch_crab_cages, place_crab_cages};
 use fischy::utils::{
-    args::rod_control_parser,
     colors::{COLOR_FISH, COLOR_HOOK, COLOR_WHITE, ColorTarget},
     fishing::Rod,
     geometry::{Dimensions, Point, Region},
@@ -47,10 +48,6 @@ struct Args {
     #[arg(short, long, default_value_t = 20)]
     max_shake_count: u8,
 
-    /// Minimum control value for the rod you're using (beware as it is not 100% accurate)
-    #[arg(short, long, default_value_t = 0., value_parser = rod_control_parser)]
-    rod_control_minimal: f32,
-
     /// Do only the shake part
     #[arg(long, default_value_t = false)]
     shake_only: bool,
@@ -62,6 +59,14 @@ struct Args {
     /// Debugging purposes
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
+
+    /// Click n times to put crab cages (you have to be already holding it being able to put them)
+    #[arg(long)]
+    place_crab_cages: Option<u16>,
+
+    /// Retrieves crab cages (you have to be able to see the button to collect them)
+    #[arg(long, num_args(0..=1), default_missing_value = "65535")]
+    fetch_crab_cages: Option<u16>,
 }
 
 /// Init logger based on debug level
@@ -126,6 +131,16 @@ fn main() {
         .dimensions
         .calculate_safe_point(&vec![&mini_game_region, &shake_region])
         .expect("Couldn't find any safe point, no region found.");
+
+    if let Some(clicks) = args.place_crab_cages {
+        place_crab_cages(&mut enigo, &safe_point, clicks, &SHUTDOWN);
+        exit(0);
+    }
+
+    if let Some(cages) = args.fetch_crab_cages {
+        fetch_crab_cages(&mut enigo, &safe_point, cages, &SHUTDOWN);
+        exit(0);
+    }
 
     #[cfg(feature = "imageproc")]
     {
@@ -241,11 +256,7 @@ fn macro_loop(
         ) {
             // Initialize hook if not set
             if rod.is_none() {
-                rod = Some(Rod::new(
-                    &screen,
-                    mini_game_region,
-                    args.rod_control_minimal,
-                ));
+                rod = Some(Rod::new(&screen, mini_game_region));
             }
 
             // Main fishing logic loop
@@ -316,17 +327,19 @@ fn fishing_loop(
         };
 
         // Check if fish is very far left or very far right
-        let percentage = (((fish_x - mini_game_region.point1.x.cast_signed()).bad_cast()
+        let mini_game_fish_percentage = (((fish_x - mini_game_region.point1.x.cast_signed())
+            .bad_cast()
             / mini_game_region.get_size().width.cast_signed().bad_cast())
             * 100.)
             .bad_cast();
-        if percentage < rod.control_percentage {
+        let mini_game_percentage_treshold = 20; // % treshold defining extreme edge
+        if mini_game_fish_percentage < mini_game_percentage_treshold {
             info!("Giving some slack...");
             enigo
                 .button(Button::Left, Release)
                 .expect("Failed giving slack");
             continue;
-        } else if percentage > 100 - rod.control_percentage {
+        } else if mini_game_fish_percentage > 100 - mini_game_percentage_treshold {
             info!("Tighting the line...");
             enigo
                 .button(Button::Left, Press)

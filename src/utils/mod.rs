@@ -1,4 +1,4 @@
-pub mod args;
+pub mod clickers;
 pub mod colors;
 pub mod fishing;
 pub mod geometry;
