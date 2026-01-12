@@ -51,3 +51,8 @@ pub static COLOR_HOOK: &[ColorTarget] = &[
         variation: 4,
     },
 ];
+
+pub static COLOR_MINIGAME_ARROWS: ColorTarget = ColorTarget {
+    color: Rgb([0x5f, 0x3b, 0x34]),
+    variation: 4,
+};

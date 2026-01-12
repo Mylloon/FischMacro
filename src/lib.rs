@@ -193,23 +193,69 @@ impl ScreenRecorder {
     }
 }
 
-/// Search a specific colors in the region from left to right
-///
-/// # Panics
-/// tmps
-#[must_use]
-pub fn search_color_ltr(
-    screen: &RgbImage,
-    targets: &[ColorTarget],
-    region: &Region,
-) -> Option<Point> {
-    let [x_min, y_min, x_max, y_max] = region.corners();
+impl Region {
+    /// Search a color in the region
+    fn search_color_impl<Xs, Ys>(
+        screen: &RgbImage,
+        targets: &[ColorTarget],
+        xs: Xs,
+        ys: &Ys,
+    ) -> Option<Point>
+    where
+        Xs: IntoIterator<Item = u32>,
+        Ys: IntoIterator<Item = u32> + Clone,
+    {
+        xs.into_iter()
+            .flat_map(|x| ys.clone().into_iter().map(move |y| (x, y)))
+            .find(|&(x, y)| targets.iter().any(|t| t.matches(*screen.get_pixel(x, y))))
+            .map(|(x, y)| Point { x, y })
+    }
 
-    let y = y_min.midpoint(y_max);
+    /// Search a color in the middle row, left to right
+    #[must_use]
+    pub fn search_color_mid_ltr(
+        &self,
+        screen: &RgbImage,
+        targets: &[ColorTarget],
+    ) -> Option<Point> {
+        let [x_min, y_min, x_max, y_max] = self.corners();
+        let y = y_min.midpoint(y_max);
+        Self::search_color_impl(screen, targets, x_min..=x_max, &[y])
+    }
 
-    (x_min..=x_max)
-        .find(|&x| targets.iter().any(|t| t.matches(*screen.get_pixel(x, y))))
-        .map(|x| Point { x, y })
+    /// Search a color in the left half
+    #[must_use]
+    pub fn search_color_left_half(
+        &self,
+        screen: &RgbImage,
+        targets: &[ColorTarget],
+    ) -> Option<Point> {
+        let [x_min, y_min, _, y_max] = self.corners();
+        let half_width = self.get_size().width / 2;
+        Self::search_color_impl(
+            screen,
+            targets,
+            x_min..=(x_min + half_width),
+            &(y_min..=y_max),
+        )
+    }
+
+    /// Search a color in the right half
+    #[must_use]
+    pub fn search_color_right_half(
+        &self,
+        screen: &RgbImage,
+        targets: &[ColorTarget],
+    ) -> Option<Point> {
+        let [_, y_min, x_max, y_max] = self.corners();
+        let half_width = self.get_size().width / 2;
+        Self::search_color_impl(
+            screen,
+            targets,
+            ((x_max - half_width)..=x_max).rev(),
+            &(y_min..=y_max),
+        )
+    }
 }
 
 pub struct Stats {

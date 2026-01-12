@@ -8,7 +8,7 @@ use rdev::{EventType, Key, simulate};
 
 use crate::{sleep, utils::geometry::Point};
 
-///
+/// Place a crab cage, assume that the player already set-up everything and we are left clicking
 ///
 /// # Panics
 /// Couldn't use the mouse
@@ -28,7 +28,7 @@ pub fn place_crab_cages(enigo: &mut Enigo, safe_point: &Point, clicks: u16, cond
     }
 }
 
-///
+/// Fetch crab cages, assume that the player already set-up everything and we are left collecting
 ///
 /// # Panics
 /// Couldn't use the keyboard

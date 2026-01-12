@@ -1,9 +1,15 @@
+use std::{
+    ops::{Deref, DerefMut},
+    slice,
+};
+
 use image::{Rgb, RgbImage};
 use log::{trace, warn};
 
-use crate::{
-    search_color_ltr,
-    utils::{colors::ColorTarget, geometry::Region, helpers::BadCast},
+use crate::utils::{
+    colors::{COLOR_MINIGAME_ARROWS, ColorTarget},
+    geometry::Region,
+    helpers::BadCast,
 };
 
 #[derive(Clone)]
@@ -117,13 +123,16 @@ impl Rod {
             self.internals.length = l;
         }
 
-        let hook_pos = if let Some(pos) =
-            search_color_ltr(image, color_white, mini_game_region).map(|p| p.x)
+        let hook_pos = if let Some(pos) = mini_game_region
+            .search_color_mid_ltr(image, color_white)
+            .map(|p| p.x)
         {
             trace!("Hook found with fish in it");
             // Fish in the hook
             Some(pos)
-        } else if let Some(pos) = search_color_ltr(image, color_hook, mini_game_region).map(|p| p.x)
+        } else if let Some(pos) = mini_game_region
+            .search_color_mid_ltr(image, color_hook)
+            .map(|p| p.x)
         {
             trace!("Hook found but fish is not in it");
             // Fish outside of the hook
@@ -154,5 +163,96 @@ impl Rod {
     ) -> Hook {
         self.update_hook(image, color_hook, color_white, mini_game_region);
         self.internals.clone()
+    }
+}
+
+/// Enhanced region
+pub struct MiniGame {
+    /// Mini-game bar
+    outer: Region,
+    /// Rod bar
+    pub rod: Option<Rod>,
+}
+
+impl Deref for MiniGame {
+    type Target = Region;
+
+    fn deref(&self) -> &Self::Target {
+        &self.outer
+    }
+}
+
+impl DerefMut for MiniGame {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.outer
+    }
+}
+
+impl MiniGame {
+    #[must_use]
+    pub fn new(region: Region) -> MiniGame {
+        MiniGame {
+            outer: region,
+            rod: None,
+        }
+    }
+
+    /// Search vertically consecutive color
+    #[must_use]
+    pub fn any_fish_hooked(&self, screen: &RgbImage, length: u32, targets: &[ColorTarget]) -> bool {
+        let [x_min, y_min, x_max, y_max] = self.corners();
+
+        (x_min..=x_max).any(|x| {
+            (y_min..=y_max - length + 1).any(|y_start| {
+                (0..length).all(|i| {
+                    targets
+                        .iter()
+                        .any(|t| t.matches(*screen.get_pixel(x, y_start + i)))
+                })
+            })
+        })
+    }
+
+    /// This HAS to be called at the very beginning of the fishing process
+    /// It refine the global mini-game area to precisely it coordinates
+    /// This shouldn't change accross hooks
+    ///
+    /// # Errors
+    /// If no control-arrows found
+    pub fn refine_area(&mut self, img: &RgbImage) -> Result<(), String> {
+        // Attempt to find arrows in both halves
+        let color = slice::from_ref(&COLOR_MINIGAME_ARROWS);
+        let (left, right) = self
+            .search_color_left_half(img, color)
+            .zip(self.search_color_right_half(img, color))
+            .ok_or("Couldn't find arrows")?;
+
+        // Update points with offsets
+        self.point1 = left + (20, -10);
+        self.point2 = right + (-20, 20);
+
+        Ok(())
+    }
+
+    pub fn update_rod(&mut self, rod: Rod) {
+        self.rod = Some(rod);
+    }
+
+    /// Returns fresh info about the hook
+    ///
+    /// # Panics
+    /// If there is no rod stored
+    pub fn find_hook(
+        &mut self,
+        image: &RgbImage,
+        color_hook: &[ColorTarget],
+        color_white: &[ColorTarget],
+    ) -> Hook {
+        self.rod.as_mut().expect("Couldn't find rod").find_hook(
+            image,
+            color_hook,
+            color_white,
+            &self.outer,
+        )
     }
 }

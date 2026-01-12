@@ -1,9 +1,22 @@
-use crate::utils::helpers::BadCast;
+use std::ops::Add;
+
+use crate::utils::{fishing::MiniGame, helpers::BadCast};
 
 #[derive(Clone)]
 pub struct Point {
     pub x: u32,
     pub y: u32,
+}
+
+impl Add<(i32, i32)> for Point {
+    type Output = Point;
+
+    fn add(self, rhs: (i32, i32)) -> Self::Output {
+        Point {
+            x: ((self.x.cast_signed()) + rhs.0).cast_unsigned(),
+            y: ((self.y.cast_signed()) + rhs.1).cast_unsigned(),
+        }
+    }
 }
 
 /// Area from point 1 to point 2
@@ -39,15 +52,14 @@ impl Dimensions {
     }
 
     /// Find where is the mini-game region
-    // TODO: Make this more accurate by double-checking with "anchors"
     #[must_use]
-    pub fn calculate_mini_game_region(&self) -> Region {
-        Region {
+    pub fn calculate_mini_game_region(&self) -> MiniGame {
+        MiniGame::new(Region {
             point1: Point {
                 x: (self.width.cast_signed().bad_cast() * 0.28)
                     .bad_cast()
                     .cast_unsigned(),
-                y: (self.height.cast_signed().bad_cast() * 0.8)
+                y: (self.height.cast_signed().bad_cast() * 0.79)
                     .bad_cast()
                     .cast_unsigned(),
             },
@@ -55,11 +67,11 @@ impl Dimensions {
                 x: (self.width.cast_signed().bad_cast() * 0.72)
                     .bad_cast()
                     .cast_unsigned(),
-                y: (self.height.cast_signed().bad_cast() * 0.85)
+                y: (self.height.cast_signed().bad_cast() * 0.9)
                     .bad_cast()
                     .cast_unsigned(),
             },
-        }
+        })
     }
 
     /// Find where shake bubble appears

@@ -12,15 +12,14 @@ use enigo::{
     Enigo, Mouse, Settings,
 };
 use fischy::utils::clickers::{fetch_crab_cages, place_crab_cages};
+use fischy::utils::fishing::MiniGame;
 use fischy::utils::{
     colors::{COLOR_FISH, COLOR_HOOK, COLOR_WHITE, ColorTarget},
     fishing::Rod,
     geometry::{Dimensions, Point, Region},
     helpers::BadCast,
 };
-use fischy::{
-    ScreenRecorder, Stats, check_running, get_roblox_executable_name, search_color_ltr, sleep,
-};
+use fischy::{ScreenRecorder, Stats, check_running, get_roblox_executable_name, sleep};
 use image::Rgb;
 use log::{debug, info, warn};
 use rand::Rng;
@@ -125,7 +124,7 @@ fn main() {
     // chat_check(&mut enigo, &mut recorder);
 
     // Calculate regions based on screen dimensions
-    let mini_game_region = recorder.dimensions.calculate_mini_game_region();
+    let mut mini_game_region = recorder.dimensions.calculate_mini_game_region();
     let shake_region = recorder.dimensions.calculate_shake_region();
     let safe_point = recorder
         .dimensions
@@ -168,7 +167,7 @@ fn main() {
         &mut enigo,
         &mut recorder,
         &safe_point,
-        &mini_game_region,
+        &mut mini_game_region,
         &shake_region,
         &args,
         &mut stats,
@@ -182,7 +181,7 @@ fn macro_loop(
     enigo: &mut Enigo,
     recorder: &mut ScreenRecorder,
     safe_point: &Point,
-    mini_game_region: &Region,
+    mini_game: &mut MiniGame,
     shake_region: &Region,
     args: &Args,
     stats: &mut Stats,
@@ -199,7 +198,6 @@ fn macro_loop(
         stats,
     );
 
-    let mut rod = None;
     while !SHUTDOWN.load(Ordering::Relaxed) {
         // Check for shake
         if let Some(Point { x, y }) = check_shake(enigo, recorder, shake_region, safe_point, args) {
@@ -249,16 +247,22 @@ fn macro_loop(
             .take_screenshot()
             .expect("Failed taking screenshot");
 
-        // Find fish and white markers
-        if let (Some(_), Some(_)) = (
-            search_color_ltr(&screen, COLOR_FISH, mini_game_region),
-            search_color_ltr(&screen, COLOR_WHITE, mini_game_region),
-        ) {
-            // Initialize hook if not set
-            if rod.is_none() {
-                rod = Some(Rod::new(&screen, mini_game_region));
-            }
+        // Called during the first fish
+        if mini_game.rod.is_none() && mini_game.any_fish_hooked(&screen, 10, COLOR_WHITE) {
+            info!("Updating Minigame structure");
+            mini_game
+                .refine_area(&screen)
+                .expect("Couldn't refine mini-game area");
 
+            // TODO: Sometimes, the rod change during the fishing
+            mini_game.update_rod(Rod::new(&screen, mini_game));
+        }
+
+        // When one fish is on the hook
+        if let (Some(_), Some(_)) = (
+            mini_game.search_color_mid_ltr(&screen, COLOR_FISH),
+            mini_game.search_color_mid_ltr(&screen, COLOR_WHITE),
+        ) {
             // Main fishing logic loop
             info!("Fishing...");
             fishing_loop(
@@ -269,8 +273,7 @@ fn macro_loop(
                     hook: COLOR_HOOK,
                     white: COLOR_WHITE,
                 },
-                mini_game_region,
-                rod.as_mut().expect("No hook found"),
+                mini_game,
                 args,
                 stats,
             );
@@ -300,8 +303,7 @@ fn fishing_loop(
     enigo: &mut Enigo,
     recorder: &mut ScreenRecorder,
     colors: &Colors,
-    mini_game_region: &Region,
-    rod: &mut Rod,
+    mini_game: &mut MiniGame,
     args: &Args,
     stats: &mut Stats,
 ) {
@@ -312,24 +314,22 @@ fn fishing_loop(
             .expect("Couldn't take screenshot");
 
         // Get current fish position
-        let fish_x = if let Some(Point { x, .. }) =
-            search_color_ltr(&screen, colors.fish, mini_game_region)
-        {
-            if args.shake_only {
-                continue;
-            }
-            x.cast_signed()
-        } else {
-            info!("The bite is over");
-            enigo.button(Button::Left, Release).expect("Packup the rod");
-            stats.add_fishing_time(loop_time.elapsed().as_secs());
-            break;
-        };
+        let fish_x =
+            if let Some(Point { x, .. }) = mini_game.search_color_mid_ltr(&screen, colors.fish) {
+                if args.shake_only {
+                    continue;
+                }
+                x.cast_signed()
+            } else {
+                info!("The bite is over");
+                enigo.button(Button::Left, Release).expect("Packup the rod");
+                stats.add_fishing_time(loop_time.elapsed().as_secs());
+                break;
+            };
 
         // Check if fish is very far left or very far right
-        let mini_game_fish_percentage = (((fish_x - mini_game_region.point1.x.cast_signed())
-            .bad_cast()
-            / mini_game_region.get_size().width.cast_signed().bad_cast())
+        let mini_game_fish_percentage = (((fish_x - mini_game.point1.x.cast_signed()).bad_cast()
+            / mini_game.get_size().width.cast_signed().bad_cast())
             * 100.)
             .bad_cast();
         let mini_game_percentage_treshold = 20; // % treshold defining extreme edge
@@ -347,7 +347,7 @@ fn fishing_loop(
             continue;
         }
 
-        let hook = rod.find_hook(&screen, colors.hook, colors.white, mini_game_region);
+        let hook = mini_game.find_hook(&screen, colors.hook, colors.white);
 
         if !hook.fish_on {
             info!("Didn't find any color corresponding to the hook");
@@ -379,23 +379,10 @@ fn fishing_loop(
                 .expect("Releasing failed");
         }
 
-        let hold_time = hold_formula(range, &mini_game_region.get_size());
+        let hold_time = hold_formula(range, &mini_game.get_size());
 
         info!("Found fish at x={fish_x} - distance fish<->hook is {range} - holding {hold_time}ms");
-        wait_until(
-            recorder,
-            mini_game_region,
-            hold_time.into(),
-            colors.fish,
-            colors.hook,
-            colors.white,
-            rod,
-        );
-
-        // TODO: Do we need to release?
-        enigo
-            .button(Button::Left, Release)
-            .expect("Releasing after losing fish failed");
+        wait_until(recorder, mini_game, hold_time.into(), colors);
     }
 }
 
@@ -500,34 +487,34 @@ fn check_shake(
 /// 3. Time runs out
 fn wait_until(
     recorder: &mut ScreenRecorder,
-    mini_game_region: &Region,
+    mini_game: &mut MiniGame,
     time_ms: u64,
-    color_fish: &[ColorTarget],
-    color_hook: &[ColorTarget],
-    color_white: &[ColorTarget],
-    rod: &mut Rod,
+    colors: &Colors,
 ) {
     let deadline = Instant::now() + Duration::from_millis(time_ms);
     let acceptable = Instant::now() + Duration::from_millis(time_ms / 2);
     while !SHUTDOWN.load(Ordering::Relaxed) {
         let now = Instant::now();
         if now >= deadline {
+            info!("Waited long enough");
             break;
         }
 
         let screen = recorder.take_screenshot().expect("Can't take screenshot");
 
-        let hook = rod.find_hook(&screen, color_hook, color_white, mini_game_region);
+        let hook = mini_game.find_hook(&screen, colors.hook, colors.white);
         if let Some(hook_position) = hook.position {
             debug!(
                 "Hook percentage: ~{}% ",
                 (hook.length.cast_signed().bad_cast()
-                    / mini_game_region.get_size().width.cast_signed().bad_cast()
+                    / mini_game.get_size().width.cast_signed().bad_cast()
                     * 100.)
                     .bad_cast(),
             );
 
-            let fish_x = search_color_ltr(&screen, color_fish, mini_game_region).map(|p| p.x);
+            let fish_x = mini_game
+                .search_color_mid_ltr(&screen, colors.fish)
+                .map(|p| p.x);
 
             // If no fish found or fish is outside valid range, return whether fish was found
             match fish_x {
