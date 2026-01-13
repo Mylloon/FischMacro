@@ -53,13 +53,6 @@ impl Rod {
         }
     }
 
-    /// Returns min & max theorical control values
-    #[must_use]
-    pub fn get_min_max_control_values() -> (f32, f32) {
-        // Default value (0) is 30% width bar
-        (-0.3, 0.7)
-    }
-
     /// Find the width of the hook
     ///
     /// NOTE: Works only when fish is on the hook (e.g. at the very start of the fishing process)
@@ -74,6 +67,8 @@ impl Rod {
 
         // Since we are at initial position, we know that the hook is on the fish,
         // so the hook is white
+        // TODO: We could simply check color that are bright,
+        //       since we are assured that mini-gam_area is precisely what we think it is
         let is_white = |x: i32| {
             (0..screen.width().cast_signed()).contains(&x)
                 && white.matches(*screen.get_pixel(x.cast_unsigned(), middle_y.cast_unsigned()))
@@ -115,7 +110,8 @@ impl Rod {
         color_white: &[ColorTarget],
         mini_game_region: &Region,
     ) {
-        // Update hook pos if we did not found final value - yet
+        // Update hook pos if we did not found right value - yet
+        // TODO: Good idea to always update (cf. Ruinous Oath Rod)
         if !self.is_real_length
             && let Ok(l) = Self::get_length(image, mini_game_region)
         {

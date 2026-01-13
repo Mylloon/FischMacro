@@ -11,7 +11,7 @@ use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
-use fischy::utils::clickers::{fetch_crab_cages, place_crab_cages};
+use fischy::utils::clickers::{fetch_crab_cages, place_crab_cages, summon_totem};
 use fischy::utils::fishing::MiniGame;
 use fischy::utils::{
     colors::{COLOR_FISH, COLOR_HOOK, COLOR_WHITE, ColorTarget},
@@ -60,12 +60,16 @@ struct Args {
     verbose: bool,
 
     /// Click n times to put crab cages (you have to be already holding it being able to put them)
-    #[arg(long)]
+    #[arg(long, num_args(0..=1), default_missing_value = "65535")]
     place_crab_cages: Option<u16>,
 
     /// Retrieves crab cages (you have to be able to see the button to collect them)
     #[arg(long, num_args(0..=1), default_missing_value = "65535")]
     fetch_crab_cages: Option<u16>,
+
+    /// Retrieves crab cages (you have to be able to see the button to collect them)
+    #[arg(long, num_args(0..=1), default_missing_value = "65535")]
+    summon_totem: Option<u16>,
 }
 
 /// Init logger based on debug level
@@ -141,6 +145,11 @@ fn main() {
         exit(0);
     }
 
+    if let Some(totems) = args.summon_totem {
+        summon_totem(&mut enigo, &safe_point, totems, &SHUTDOWN);
+        exit(0);
+    }
+
     #[cfg(feature = "imageproc")]
     {
         use fischy::utils::debug::Drawable;
@@ -154,11 +163,11 @@ fn main() {
 
         mini_game_region
             .clone()
-            .draw_async(img.clone(), "mini_game.png");
+            .draw_async(img.clone(), "mini_game.png", true);
         shake_region
             .clone()
-            .draw_async(img.clone(), "shake_region.png");
-        safe_point.clone().draw_async(img, "safe_point.png");
+            .draw_async(img.clone(), "shake_region.png", true);
+        safe_point.clone().draw_async(img, "safe_point.png", true);
     }
 
     let mut stats = Stats::new(args.stats);
@@ -308,6 +317,7 @@ fn fishing_loop(
     stats: &mut Stats,
 ) {
     let loop_time = Instant::now();
+    let mut previous_hook_x = 0;
     while !SHUTDOWN.load(Ordering::Relaxed) {
         let screen = recorder
             .take_screenshot()
@@ -332,6 +342,7 @@ fn fishing_loop(
             / mini_game.get_size().width.cast_signed().bad_cast())
             * 100.)
             .bad_cast();
+        // TODO: Use half of the hook bar instead of fixed 20%
         let mini_game_percentage_treshold = 20; // % treshold defining extreme edge
         if mini_game_fish_percentage < mini_game_percentage_treshold {
             info!("Giving some slack...");
@@ -357,21 +368,27 @@ fn fishing_loop(
         }
 
         // Calculate range between fish and hook
-        let range = fish_x
-            - hook
-                .position
-                .as_ref()
-                .expect("Can't find the hook")
-                .absolute_mid_x
-                .cast_signed();
-        info!(
-            "Distance fish ({fish_x}) and hook ({}): {range}",
-            hook.position.expect("Can't find the hook").absolute_mid_x
-        );
+        let hook_x = hook
+            .position
+            .expect("Can't find the hook")
+            .absolute_mid_x
+            .cast_signed();
+        let range = fish_x - hook_x;
+        let speed = hook_x - previous_hook_x;
+        info!("Distance fish ({fish_x}) and hook ({hook_x}) is {range}");
+
+        // % of the hook bar
+        if range.abs() <= ((hook.length.cast_signed().bad_cast() / 2.) * 0.60).bad_cast()
+            && speed.abs() < 20
+            && range < hook.length.cast_signed()
+        {
+            // Spamming to stay more easily in range, only if speed is not too high
+            enigo.button(Button::Left, Click).expect("Clicking failed");
+        }
 
         if range >= 0 {
             info!("==> To the right! ==>");
-            enigo.button(Button::Left, Press).expect("Clicking failed");
+            enigo.button(Button::Left, Press).expect("Pressing failed");
         } else {
             info!("<== To the left! <==");
             enigo
@@ -379,10 +396,12 @@ fn fishing_loop(
                 .expect("Releasing failed");
         }
 
-        let hold_time = hold_formula(range, &mini_game.get_size());
+        let hold_time = hold_formula(range, speed, &mini_game.get_size());
 
         info!("Found fish at x={fish_x} - distance fish<->hook is {range} - holding {hold_time}ms");
         wait_until(recorder, mini_game, hold_time.into(), colors);
+
+        previous_hook_x = hook_x; // update previous hook position
     }
 }
 
@@ -408,7 +427,7 @@ fn reels(
         &SHUTDOWN,
     );
 
-    println!("Reeling...");
+    info!("Reeling...");
     // Casting motion
     enigo
         .button(Button::Left, Press)
@@ -431,13 +450,28 @@ fn reels(
 
 /// Determine how long we should hold the line in milliseconds
 /// based on distances between the fish and the middle of the hook
-fn hold_formula(gap: i32, full_area: &Dimensions) -> u32 {
-    let multiplicator = 1600. + if gap > 0 { 500. } else { 0. };
+fn hold_formula(gap: i32, estimated_speed: i32, full_area: &Dimensions) -> u32 {
+    let gap_abs = gap.abs().bad_cast();
+    let max_gap = full_area.width.cast_signed().bad_cast() / 2.;
 
-    (((multiplicator * gap.abs().bad_cast() / (full_area.width.cast_signed().bad_cast()))
-        .bad_cast())
-    .clamp(100, 2000))
-    .cast_unsigned()
+    let t = (gap_abs / max_gap).clamp(0., 1.);
+    // let eased = t * t; // quadratic curve
+    let eased = t * t * t; // cubic curve
+
+    let min_ms = 10.;
+    let max_ms = 1500.;
+
+    let mut ms = min_ms + eased * (max_ms - min_ms);
+
+    // Stopping power by reducing holding time
+    if gap.signum() == estimated_speed.signum() {
+        let max_speed = 200.;
+        // INFO: We could increase brake force by multiplying this value
+        let brake_boost = 1. + (estimated_speed.abs().bad_cast() / max_speed).clamp(0., 1.);
+        ms /= brake_boost;
+    }
+
+    ms.round().bad_cast().cast_unsigned()
 }
 
 /// Returns the coordinates of the shake bubble
@@ -468,7 +502,8 @@ fn check_shake(
     // Check image from bottom to top helps up leveraging broadcast messages that are
     // overlaping with the shaking area
     let image = screen.take_screenshot().expect("Can't take screenshot");
-    (y_min..=y_max)
+
+    let shake_point = (y_min..=y_max)
         .rev()
         .flat_map(|y| (x_min..=x_max).map(move |x| (x, y)))
         .find_map(|(x, y)| {
@@ -476,9 +511,21 @@ fn check_shake(
 
             pure_white.matches(*pixel).then(|| Point {
                 x: x.cast_unsigned() + 20,
-                y: y.cast_unsigned() + 10,
+                y: y.cast_unsigned() - 10,
             })
-        })
+        });
+
+    #[cfg(feature = "imageproc")]
+    {
+        use fischy::utils::debug::Drawable;
+        use std::sync::Arc;
+
+        if let Some(p) = shake_point.clone() {
+            p.draw_async(Arc::new(image.clone()), "shakes/point.png", false);
+        }
+    }
+
+    shake_point
 }
 
 /// Stop waiting until:
@@ -492,7 +539,19 @@ fn wait_until(
     colors: &Colors,
 ) {
     let deadline = Instant::now() + Duration::from_millis(time_ms);
-    let acceptable = Instant::now() + Duration::from_millis(time_ms / 2);
+
+    // % of time
+    let acceptable = Instant::now()
+        + Duration::from_millis(
+            (i32::try_from(time_ms.cast_signed())
+                .expect("Couldn't cast")
+                .bad_cast()
+                * 0.5)
+                .bad_cast()
+                .cast_unsigned()
+                .into(),
+        );
+
     while !SHUTDOWN.load(Ordering::Relaxed) {
         let now = Instant::now();
         if now >= deadline {
