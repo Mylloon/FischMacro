@@ -8,7 +8,7 @@ use std::{
 
 use image::{Rgb, RgbImage};
 use imageproc::{
-    drawing::{draw_hollow_circle, draw_hollow_rect},
+    drawing::{draw_hollow_circle, draw_hollow_circle_mut, draw_hollow_rect},
     rect::Rect,
 };
 
@@ -75,7 +75,7 @@ impl Drawable for Region {
             img,
             Rect::at(self.point1.x.cast_signed(), self.point1.y.cast_signed())
                 .of_size(dims.width, dims.height),
-            Rgb([0xff, 0, 0]),
+            Rgb([0, 0, 0xff]),
         )
         .save(path)
         .ok();
@@ -84,13 +84,20 @@ impl Drawable for Region {
 
 impl Drawable for Point {
     fn draw_logic(&self, img: &RgbImage, path: PathBuf) {
-        draw_hollow_circle(
+        let mut tmp = draw_hollow_circle(
             img,
             (self.x.cast_signed(), self.y.cast_signed()),
             40,
             Rgb([0xff, 0, 0]),
-        )
-        .save(path)
-        .ok();
+        );
+
+        draw_hollow_circle_mut(
+            &mut tmp,
+            (self.x.cast_signed(), self.y.cast_signed()),
+            5,
+            Rgb([0xff, 0, 0]),
+        );
+
+        tmp.save(path).ok();
     }
 }

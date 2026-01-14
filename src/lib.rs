@@ -207,7 +207,7 @@ impl Region {
     {
         xs.into_iter()
             .flat_map(|x| ys.clone().into_iter().map(move |y| (x, y)))
-            .find(|&(x, y)| targets.iter().any(|t| t.matches(*screen.get_pixel(x, y))))
+            .find(|&(x, y)| targets.iter().any(|t| t.matches(screen.get_pixel(x, y))))
             .map(|(x, y)| Point { x, y })
     }
 

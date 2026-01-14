@@ -4,11 +4,10 @@ use std::{
 };
 
 use image::{Rgb, RgbImage};
-use log::{trace, warn};
 
 use crate::utils::{
-    colors::{COLOR_MINIGAME_ARROWS, ColorTarget},
-    geometry::Region,
+    colors::ColorTarget,
+    geometry::{Point, Region},
     helpers::BadCast,
 };
 
@@ -36,128 +35,116 @@ pub struct Hook {
 
 pub struct Rod {
     internals: Hook,
-    is_real_length: bool,
 }
 
 impl Rod {
     #[must_use]
     pub fn new(screen: &RgbImage, mini_game_region: &Region) -> Self {
-        let length = Self::get_length(screen, mini_game_region);
-        Rod {
-            internals: Hook {
-                position: None,
-                length: length.unwrap_or_else(|e| e),
-                fish_on: false,
+        match Self::search_hook(screen, mini_game_region) {
+            Some((length, position)) => Rod {
+                internals: Hook {
+                    position: Some(position),
+                    length,
+                    fish_on: false,
+                },
             },
-            is_real_length: length.is_ok(),
+            None => Rod {
+                internals: {
+                    // Default percentage value: https://fischipedia.org/wiki/Fishing_Rods#Control
+                    let percentage = 30;
+                    Hook {
+                        position: None,
+                        length: (mini_game_region.get_size().width.cast_signed().bad_cast()
+                            * (percentage.bad_cast() / 100.))
+                            .bad_cast()
+                            .cast_unsigned(),
+                        fish_on: false,
+                    }
+                },
+            },
         }
     }
 
-    /// Find the width of the hook
+    /// Find the hook
     ///
-    /// NOTE: Works only when fish is on the hook (e.g. at the very start of the fishing process)
-    fn calculate_initial_hook_width(screen: &RgbImage, region: &Region) -> Option<i32> {
-        let [x_min, y_min, x_max, y_max] = region.corners().map(u32::cast_signed);
-        let middle_y = y_min.midpoint(y_max);
+    /// # Return
+    /// Couple (hook's length, hook's position)
+    fn search_hook(screen: &RgbImage, region: &Region) -> Option<(u32, HookPosition)> {
+        let [x_min, y_min, x_max, y_max] = region.corners();
+        let y = y_min.midpoint(y_max);
+        let gap_tolerance = 35; // take into account arrows and fish that overlap the hook bar
 
-        let white = ColorTarget {
-            color: Rgb([255, 255, 255]),
-            variation: 21,
+        let brightnesses = (x_min..=x_max)
+            .map(|x| (x, ColorTarget::brightness(screen.get_pixel(x, y))))
+            .collect::<Vec<_>>();
+
+        let threshold = {
+            let mut sorted = brightnesses.iter().map(|(_, b)| *b).collect::<Vec<_>>();
+            sorted.sort_unstable();
+            // We use 3% because it's probably the smallest the hook bar can get
+            sorted[sorted.len() * 97 / 100]
         };
 
-        // Since we are at initial position, we know that the hook is on the fish,
-        // so the hook is white
-        // TODO: We could simply check color that are bright,
-        //       since we are assured that mini-gam_area is precisely what we think it is
-        let is_white = |x: i32| {
-            (0..screen.width().cast_signed()).contains(&x)
-                && white.matches(*screen.get_pixel(x.cast_unsigned(), middle_y.cast_unsigned()))
-        };
+        // Find contiguous bright segments with gap tolerance
+        let segments: Vec<_> = brightnesses
+            .iter()
+            .scan(None, |state, &(x, brightness)| {
+                let mut res = None;
+                if brightness >= threshold {
+                    *state = Some(match state.take() {
+                        Some((start, _)) => (start, x),
+                        None => (x, x),
+                    });
+                    res = *state;
+                } else if let Some((start, last)) = *state {
+                    if x - last > gap_tolerance {
+                        res = Some((start, last));
+                        *state = None;
+                    } else {
+                        *state = Some((start, last));
+                    }
+                }
+                Some(res)
+            })
+            .flatten()
+            .collect();
 
-        let left = (x_min..=x_max).find(|&x| is_white(x));
-        let right = (x_min..=x_max).rev().find(|&x| is_white(x));
-
-        left.zip(right).map(|(l, r)| r - l)
-    }
-
-    /// Find length
-    /// Ok(x) means exact length
-    /// Err(x) means computed length
-    fn get_length(screen: &RgbImage, mini_game_region: &Region) -> Result<u32, u32> {
-        Self::calculate_initial_hook_width(screen, mini_game_region).map_or(
-            {
-                // Default percentage value: https://fischipedia.org/wiki/Fishing_Rods#Control
-
-                let percentage = 30;
-                warn!("Hook not found, falling back to {percentage}% of minigame window");
-                Err((mini_game_region.get_size().width.cast_signed().bad_cast()
-                    * (percentage.bad_cast() / 100.))
-                    .bad_cast()
-                    .cast_unsigned())
-            },
-            |e| {
-                warn!("Found hook: using {e} as length");
-                Ok(e.cast_unsigned())
-            },
-        )
+        segments
+            .into_iter()
+            .map(|(l, r)| (r - l, l, r))
+            // Keep longest segment
+            .max_by_key(|(width, _, _)| *width)
+            .map(|(width, l, r)| {
+                // INFO: we could map only once and create directly our structure,
+                //       but since we can get MANY segments (like ~400),
+                //       we only do that for the chosen one
+                (
+                    width,
+                    HookPosition {
+                        absolute_beg_x: l,
+                        absolute_mid_x: l + width / 2,
+                        absolute_end_x: r,
+                    },
+                )
+            })
     }
 
     /// Refresh hook data
-    fn update_hook(
-        &mut self,
-        image: &RgbImage,
-        color_hook: &[ColorTarget],
-        color_white: &[ColorTarget],
-        mini_game_region: &Region,
-    ) {
-        // Update hook pos if we did not found right value - yet
-        // TODO: Good idea to always update (cf. Ruinous Oath Rod)
-        if !self.is_real_length
-            && let Ok(l) = Self::get_length(image, mini_game_region)
-        {
-            self.is_real_length = true;
+    fn update_hook(&mut self, image: &RgbImage, mini_game_region: &Region) {
+        let hook_data = Self::search_hook(image, mini_game_region);
+        self.internals.fish_on = hook_data.is_some();
+        if let Some((l, hook_pos)) = hook_data {
             self.internals.length = l;
+            self.internals.position = Some(hook_pos);
         }
-
-        let hook_pos = if let Some(pos) = mini_game_region
-            .search_color_mid_ltr(image, color_white)
-            .map(|p| p.x)
-        {
-            trace!("Hook found with fish in it");
-            // Fish in the hook
-            Some(pos)
-        } else if let Some(pos) = mini_game_region
-            .search_color_mid_ltr(image, color_hook)
-            .map(|p| p.x)
-        {
-            trace!("Hook found but fish is not in it");
-            // Fish outside of the hook
-            Some(pos)
-        } else {
-            trace!("Hook not found");
-            None
-        };
-
-        self.internals.position = hook_pos.map(|p| HookPosition {
-            absolute_beg_x: p,
-            absolute_mid_x: p + (self.internals.length / 2),
-            absolute_end_x: p + self.internals.length,
-        });
-        self.internals.fish_on = hook_pos.is_some();
     }
 
     /// Returns fresh info about the hook
     ///
     /// # Panics
     /// Not be able to take a screenshot
-    pub fn find_hook(
-        &mut self,
-        image: &RgbImage,
-        color_hook: &[ColorTarget],
-        color_white: &[ColorTarget],
-        mini_game_region: &Region,
-    ) -> Hook {
-        self.update_hook(image, color_hook, color_white, mini_game_region);
+    pub fn find_hook(&mut self, image: &RgbImage, mini_game_region: &Region) -> Hook {
+        self.update_hook(image, mini_game_region);
         self.internals.clone()
     }
 }
@@ -193,18 +180,49 @@ impl MiniGame {
         }
     }
 
-    /// Search vertically consecutive color
+    /// Search if the fish is hooked based on the mouse above the minigame
     #[must_use]
-    pub fn any_fish_hooked(&self, screen: &RgbImage, length: u32, targets: &[ColorTarget]) -> bool {
-        let [x_min, y_min, x_max, y_max] = self.corners();
+    pub fn any_fish_hooked(&self, screen: &RgbImage) -> bool {
+        // Use mouse above minigame bar
+        let approx_y = (screen.height().cast_signed().bad_cast() * 0.72)
+            .bad_cast()
+            .cast_unsigned();
+        let mouse = Region {
+            point1: Point {
+                x: self.point1.x - 5 + self.get_size().width / 2,
+                y: approx_y + 1,
+            },
+            point2: Point {
+                x: self.point1.x + 9 + self.get_size().width / 2,
+                y: approx_y + 8,
+            },
+        };
 
-        (x_min..=x_max).any(|x| {
-            (y_min..=y_max - length + 1).any(|y_start| {
-                (0..length).all(|i| {
-                    targets
-                        .iter()
-                        .any(|t| t.matches(*screen.get_pixel(x, y_start + i)))
-                })
+        // #[cfg(feature = "imageproc")]
+        // {
+        //     use crate::utils::debug::Drawable;
+        //     use std::sync::Arc;
+
+        //     mouse
+        //         .clone()
+        //         .draw_async(Arc::new(screen.clone()), "mouses/0.png", false);
+        // }
+
+        let [x_min, y_min, x_max, y_max] = mouse.corners();
+        let y = y_min.midpoint(y_max);
+        let consecutive = 10;
+        (x_min..=x_max.saturating_sub(consecutive - 1)).any(|x_start| {
+            let Rgb([r1, g1, b1]) = *screen.get_pixel(x_start, y);
+            (0..consecutive).all(|i| {
+                let Rgb([r2, g2, b2]) = *screen.get_pixel(x_start + i, y);
+                let tolerance = 3;
+                let brightness = ColorTarget::brightness(screen.get_pixel(x_start + i, y));
+                let correct_brightness =
+                    (210..240).contains(&brightness) || (90..120).contains(&brightness);
+                correct_brightness
+                    && (i16::from(r1) - i16::from(r2)).abs() <= tolerance
+                    && (i16::from(g1) - i16::from(g2)).abs() <= tolerance
+                    && (i16::from(b1) - i16::from(b2)).abs() <= tolerance
             })
         })
     }
@@ -217,7 +235,10 @@ impl MiniGame {
     /// If no control-arrows found
     pub fn refine_area(&mut self, img: &RgbImage) -> Result<(), String> {
         // Attempt to find arrows in both halves
-        let color = slice::from_ref(&COLOR_MINIGAME_ARROWS);
+        let color = slice::from_ref(&ColorTarget {
+            color: Rgb([0x5f, 0x3b, 0x34]),
+            variation: 4,
+        });
         let (left, right) = self
             .search_color_left_half(img, color)
             .zip(self.search_color_right_half(img, color))
@@ -230,7 +251,7 @@ impl MiniGame {
         Ok(())
     }
 
-    pub fn update_rod(&mut self, rod: Rod) {
+    pub fn initialize_rod(&mut self, rod: Rod) {
         self.rod = Some(rod);
     }
 
@@ -238,17 +259,10 @@ impl MiniGame {
     ///
     /// # Panics
     /// If there is no rod stored
-    pub fn find_hook(
-        &mut self,
-        image: &RgbImage,
-        color_hook: &[ColorTarget],
-        color_white: &[ColorTarget],
-    ) -> Hook {
-        self.rod.as_mut().expect("Couldn't find rod").find_hook(
-            image,
-            color_hook,
-            color_white,
-            &self.outer,
-        )
+    pub fn find_hook(&mut self, image: &RgbImage) -> Hook {
+        self.rod
+            .as_mut()
+            .expect("Couldn't find rod")
+            .find_hook(image, &self.outer)
     }
 }
