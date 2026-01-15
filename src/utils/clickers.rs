@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use enigo::{Axis::Vertical, Button, Coordinate::Abs, Direction::Click, Enigo, Mouse};
+use enigo::{Axis::Vertical, Button, Direction::Click, Enigo, Mouse};
 use log::info;
 use rdev::{Event, EventType, EventType::KeyPress, Key, listen, simulate};
 
@@ -22,7 +22,7 @@ static ENTER_PRESSED: AtomicBool = AtomicBool::new(false);
 pub fn place_crab_cages(enigo: &mut Enigo, safe_point: &Point, clicks: u16, cond: &AtomicBool) {
     // Move mouse
     enigo
-        .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+        .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
 
     let infinite = clicks == u16::MAX;
@@ -46,7 +46,7 @@ pub fn place_crab_cages(enigo: &mut Enigo, safe_point: &Point, clicks: u16, cond
 pub fn fetch_crab_cages(enigo: &mut Enigo, safe_point: &Point, cages: u16, cond: &AtomicBool) {
     // Move mouse
     enigo
-        .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+        .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
 
     let key_e = Key::KeyE;
@@ -71,7 +71,7 @@ pub fn fetch_crab_cages(enigo: &mut Enigo, safe_point: &Point, cages: u16, cond:
 pub fn summon_totem(enigo: &mut Enigo, safe_point: &Point, totems: u16, cond: &AtomicBool) {
     // Move mouse
     enigo
-        .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+        .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
 
     let infinite = totems == u16::MAX;
@@ -118,7 +118,7 @@ pub fn sell_items(
 
     // Move mouse
     enigo
-        .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+        .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
     enigo
         .scroll_ig(-Enigo::max_scroll(), Vertical)
@@ -148,7 +148,7 @@ pub fn sell_items(
     while (infinite || remaining > 0) && !cond.load(Ordering::Relaxed) {
         // Item
         enigo
-            .move_mouse(item.x.cast_signed(), item.y.cast_signed(), Abs)
+            .move_mouse_ig_abs(item.x.cast_signed(), item.y.cast_signed())
             .expect("Couldn't move mouse to item");
         enigo
             .button(Button::Left, Click)
@@ -156,7 +156,7 @@ pub fn sell_items(
 
         // Sell
         enigo
-            .move_mouse(dialog.x.cast_signed(), dialog.y.cast_signed(), Abs)
+            .move_mouse_ig_abs(dialog.x.cast_signed(), dialog.y.cast_signed())
             .expect("Couldn't move mouse to dialog");
         enigo
             .button(Button::Left, Click)
@@ -200,7 +200,7 @@ pub fn appraise_items(
 
     // Move mouse
     enigo
-        .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+        .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
     enigo
         .scroll_ig(-Enigo::max_scroll(), Vertical)
@@ -232,7 +232,7 @@ pub fn appraise_items(
         // Item
         sleep(Duration::from_millis(100), cond);
         enigo
-            .move_mouse(item.x.cast_signed(), item.y.cast_signed(), Abs)
+            .move_mouse_ig_abs(item.x.cast_signed(), item.y.cast_signed())
             .expect("Couldn't move mouse to item");
         sleep(Duration::from_millis(100), cond);
         enigo
@@ -241,7 +241,7 @@ pub fn appraise_items(
 
         // Ask for price
         enigo
-            .move_mouse(dialog.x.cast_signed(), dialog.y.cast_signed(), Abs)
+            .move_mouse_ig_abs(dialog.x.cast_signed(), dialog.y.cast_signed())
             .expect("Couldn't move mouse to dialog");
         enigo
             .button(Button::Left, Click)

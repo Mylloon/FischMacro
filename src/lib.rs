@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use enigo::{Axis, Enigo, InputResult, Mouse};
+use enigo::{Axis, Coordinate::Abs, Enigo, InputResult, Mouse};
 use image::RgbImage;
 use log::warn;
 use scap::{
@@ -342,11 +342,17 @@ pub trait Scroller {
 
     /// Return maximum scroll needed for Fisch
     fn max_scroll() -> i32;
+
+    /// Move mouse with fixes for Roblox by smoothing movement
+    ///
+    /// # Errors
+    /// If couldn't move the mouse
+    fn move_mouse_ig_abs(&mut self, x: i32, y: i32) -> InputResult<()>;
 }
 
 impl Scroller for Enigo {
     fn scroll_ig(&mut self, length: i32, axis: Axis) -> InputResult<()> {
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "windows"))]
         {
             self.scroll(length, axis)
         }
@@ -365,7 +371,7 @@ impl Scroller for Enigo {
 
     /// Return maximum scroll needed for Fisch
     fn max_scroll() -> i32 {
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "windows"))]
         {
             8
         }
@@ -374,5 +380,31 @@ impl Scroller for Enigo {
         {
             13
         }
+    }
+
+    fn move_mouse_ig_abs(&mut self, x: i32, y: i32) -> InputResult<()> {
+        #[cfg(target_os = "windows")] // smooth movement on Windows
+        {
+            use crate::utils::helpers::BadCast;
+
+            let (start_x, start_y) = self.location()?;
+            let dx = (x - start_x).bad_cast();
+            let dy = (y - start_y).bad_cast();
+
+            let steps = 5;
+            for i in 1..=steps {
+                let progress = i.bad_cast() / steps.bad_cast();
+                let eased_progress = 1.0 - (1.0 - progress).powi(2);
+
+                let current_x = start_x + (dx * eased_progress).bad_cast();
+                let current_y = start_y + (dy * eased_progress).bad_cast();
+
+                self.move_mouse(current_x, current_y, Abs)?;
+
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        self.move_mouse(x, y, Abs)
     }
 }

@@ -8,7 +8,7 @@ use clap::Parser;
 use enigo::{
     Axis::Vertical,
     Button,
-    Coordinate::{Abs, Rel},
+    Coordinate::Rel,
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
@@ -247,7 +247,7 @@ fn macro_loop(
             // Click at the shake position
             info!("Shake @ ({x}, {y})");
             enigo
-                .move_mouse(x.cast_signed(), y.cast_signed(), Abs)
+                .move_mouse_ig_abs(x.cast_signed(), y.cast_signed())
                 .expect("Failed moving mouse to shake bubble");
             sleep(Duration::from_millis(100), &SHUTDOWN); // we may move the mouse too fast
             enigo
@@ -424,7 +424,7 @@ fn fishing_loop(
         info!("Distance fish ({fish_x}) and hook ({hook_x}) is {range}");
 
         // % of the hook bar
-        if range.abs() <= ((hook.length.cast_signed().bad_cast() / 2.) * 0.60).bad_cast()
+        if range.abs() <= ((hook.length.cast_signed().bad_cast() / 2.) * 0.40).bad_cast()
             && speed.abs() < 20
             && range < hook.length.cast_signed()
         {
@@ -462,7 +462,7 @@ fn reels(
 ) {
     // Move mouse
     enigo
-        .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+        .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
 
     // Click to be sure we are not shaking
@@ -505,7 +505,7 @@ fn hold_formula(gap: i32, estimated_speed: i32, full_area: &Dimensions) -> u32 {
     // let eased = t * t; // quadratic curve
     let eased = normalized_gap.powi(3); // cubic curve
 
-    let min_ms = 10.;
+    let min_ms = 100.;
     let max_ms = 1500.;
 
     let mut ms = min_ms + eased * (max_ms - min_ms);
@@ -546,7 +546,7 @@ fn check_shake(
             &SHUTDOWN,
         );
         enigo
-            .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+            .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
             .expect("Can't move mouse");
         // Sleep 2 / 3 to be sure the screenshot won't capture our cursor
         sleep(
@@ -674,24 +674,17 @@ fn initialize_viewpoint(enigo: &mut Enigo, screen_dims: &Dimensions, cond: &Atom
 
     // "Safepoint"
     enigo
-        .move_mouse(
-            screen_dims.width.cast_signed() / 2,
-            screen_dims.height.cast_signed() - padding,
-            Abs,
-        )
+        .move_mouse_ig_abs(screen_dims.width.cast_signed() / 2, padding)
         .expect("Going to safepoint failed");
 
     // Looking at the floor
-    #[cfg(target_os = "linux")]
     let movement = (0, screen_dims.height.cast_signed() / 2);
-
-    #[cfg(not(target_os = "linux"))]
-    let movement = (0, screen_dims.height.cast_signed() / -2);
 
     let steps = 2;
     (0..=steps).for_each(|_| {
         enigo.button(Button::Right, Press).expect("Pressing failed");
         sleep(Duration::from_millis(100), cond);
+
         enigo
             .move_mouse(movement.0, movement.1, Rel)
             .expect("Going down failed");
