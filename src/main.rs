@@ -12,7 +12,9 @@ use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
-use fischy::utils::clickers::{fetch_crab_cages, place_crab_cages, sell_items, summon_totem};
+use fischy::utils::clickers::{
+    appraise_items, fetch_crab_cages, place_crab_cages, sell_items, summon_totem,
+};
 use fischy::utils::fishing::MiniGame;
 use fischy::utils::{
     colors::ColorTarget,
@@ -38,11 +40,12 @@ To make this program work:
     - hide the quest (top-right book button) and scoreboard (tab)
     - be sure to run Roblox maximised on your primary screen"#
 )]
+#[allow(clippy::struct_excessive_bools)]
 struct Args {
     /// Sleep between shakes to prevent capturing the cursor
     #[cfg(target_os = "linux")]
     #[arg(long, default_value_t = 300)]
-    lag: u64,
+    lag: u32,
 
     /// Maximum shake count
     #[arg(short, long, default_value_t = 20)]
@@ -55,6 +58,10 @@ struct Args {
     /// Compute and print stats
     #[arg(short, long, default_value_t = false)]
     stats: bool,
+
+    /// Disable camera setup looking down at the start
+    #[arg(long)]
+    no_camera_setup: bool,
 
     /// Debugging purposes
     #[arg(short, long, default_value_t = false)]
@@ -75,6 +82,11 @@ struct Args {
     /// Sell items (you have to see the "I'd like to sell this" with 2 dialogs options)
     #[arg(long, num_args(0..=1), default_missing_value = "65535")]
     sell_items: Option<u16>,
+
+    /// Appraise items (you have to see the "Can you appraise this fish?" with 3 dialogs options).
+    /// You will have to press `Return` to do another appraisal
+    #[arg(long)]
+    appraise_items: bool,
 }
 
 /// Init logger based on debug level
@@ -182,9 +194,16 @@ fn main() {
         exit(0);
     }
 
+    if args.appraise_items {
+        appraise_items(&mut enigo, &safe_point, &mut recorder, &SHUTDOWN);
+        exit(0);
+    }
+
     let mut stats = Stats::new(args.stats);
 
-    initialize_viewpoint(&mut enigo, &recorder.dimensions, &SHUTDOWN);
+    if !args.no_camera_setup {
+        initialize_viewpoint(&mut enigo, &recorder.dimensions, &SHUTDOWN);
+    }
 
     macro_loop(
         &mut enigo,
@@ -517,11 +536,29 @@ fn check_shake(
     // Move cursor out of the region (Sober creates a custom cursor)
     #[cfg(target_os = "linux")]
     {
+        // Sleep 1 / 3 to be sure we correctly move the cursor
+        sleep(
+            Duration::from_millis(
+                (args.lag.cast_signed().bad_cast() * 1. / 3.)
+                    .bad_cast()
+                    .cast_unsigned()
+                    .into(),
+            ),
+            &SHUTDOWN,
+        );
         enigo
             .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
             .expect("Can't move mouse");
-        // Sleep to be sure the screenshot won't capture our cursor
-        sleep(Duration::from_millis(args.lag), &SHUTDOWN);
+        // Sleep 2 / 3 to be sure the screenshot won't capture our cursor
+        sleep(
+            Duration::from_millis(
+                (args.lag.cast_signed().bad_cast() * 2. / 3.)
+                    .bad_cast()
+                    .cast_unsigned()
+                    .into(),
+            ),
+            &SHUTDOWN,
+        );
     }
 
     let pure_white = ColorTarget {
@@ -667,7 +704,6 @@ fn initialize_viewpoint(enigo: &mut Enigo, screen_dims: &Dimensions, cond: &Atom
     // Zoom
     enigo.scroll(-8, Vertical).expect("Can't zoom in");
     enigo.scroll(1, Vertical).expect("Can't zoom out");
-    sleep(Duration::from_millis(100), cond);
 }
 
 /// Register specific keypress that will stop the program
@@ -675,7 +711,7 @@ fn register_keybinds() {
     thread::spawn(|| {
         listen(|e| {
             if let Event {
-                event_type: KeyPress(Key::Escape | Key::Return | Key::Space),
+                event_type: KeyPress(Key::Escape | Key::Space),
                 ..
             } = e
             {

@@ -1,16 +1,19 @@
 use std::{
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use enigo::{Axis::Vertical, Button, Coordinate::Abs, Direction::Click, Enigo, Mouse};
 use log::info;
-use rdev::{EventType, Key, simulate};
+use rdev::{Event, EventType, EventType::KeyPress, Key, listen, simulate};
 
 use crate::{
     ScreenRecorder, sleep,
     utils::{geometry::Point, helpers::BadCast},
 };
+
+static ENTER_PRESSED: AtomicBool = AtomicBool::new(false);
 
 /// Place a crab cage, assume that the player already set-up everything and we are left clicking
 ///
@@ -163,4 +166,128 @@ pub fn sell_items(
             info!("{remaining} remaining");
         }
     }
+}
+
+/// Appraise items, assume that the player entered the dialog "Can you appraise this fish" with 3 options.
+/// User have to press `RETURN` to do another appraisal
+///
+/// # Panics
+/// Couldn't use the mouse
+pub fn appraise_items(
+    enigo: &mut Enigo,
+    safe_point: &Point,
+    recorder: &mut ScreenRecorder,
+    cond: &AtomicBool,
+) {
+    let item = Point {
+        x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.36)
+            .bad_cast()
+            .cast_unsigned(),
+        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.66)
+            .bad_cast()
+            .cast_unsigned(),
+    };
+    let dialog = Point {
+        x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.63)
+            .bad_cast()
+            .cast_unsigned(),
+        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.51)
+            .bad_cast()
+            .cast_unsigned(),
+    };
+
+    // Move mouse
+    enigo
+        .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
+        .expect("Can't move mouse");
+    enigo.scroll(-8, Vertical).expect("Can't zoom in");
+    enigo.scroll(2, Vertical).expect("Can't zoom out");
+
+    #[cfg(feature = "imageproc")]
+    {
+        use crate::utils::debug::Drawable;
+        use std::sync::Arc;
+
+        sleep(Duration::from_millis(100), cond);
+        let screen = Arc::new(
+            recorder
+                .take_screenshot()
+                .expect("Couldn't take screenshot"),
+        );
+
+        item.clone()
+            .draw_async(screen.clone(), "appraise_item.png", true);
+        dialog
+            .clone()
+            .draw_async(screen, "appraise_dialog.png", true);
+    }
+
+    register_return();
+    while !cond.load(Ordering::Relaxed) {
+        ENTER_PRESSED.store(false, Ordering::SeqCst);
+        // Item
+        sleep(Duration::from_millis(100), cond);
+        enigo
+            .move_mouse(item.x.cast_signed(), item.y.cast_signed(), Abs)
+            .expect("Couldn't move mouse to item");
+        sleep(Duration::from_millis(100), cond);
+        enigo
+            .button(Button::Left, Click)
+            .expect("Couldn't select item");
+
+        // Ask for price
+        enigo
+            .move_mouse(dialog.x.cast_signed(), dialog.y.cast_signed(), Abs)
+            .expect("Couldn't move mouse to dialog");
+        enigo
+            .button(Button::Left, Click)
+            .expect("Couldn't ask for appraisal");
+
+        // Wait for user approval
+        wait_user_input_with_minimal_wait(Duration::from_secs(2), cond, &ENTER_PRESSED);
+
+        // Appraisal
+        enigo
+            .button(Button::Left, Click)
+            .expect("Couldn't appraise item");
+        sleep(Duration::from_secs(2), cond);
+    }
+}
+
+fn wait_user_input_with_minimal_wait(
+    duration: Duration,
+    cond: &AtomicBool,
+    enter_pressed: &AtomicBool,
+) {
+    let chunk = Duration::from_millis(1);
+    let start = Instant::now();
+    while !cond.load(Ordering::Relaxed) {
+        let elapsed = start.elapsed();
+        let min_passed = elapsed >= duration;
+        let enter = enter_pressed.load(Ordering::Relaxed);
+
+        if min_passed && enter {
+            break;
+        }
+
+        let remaining = duration.checked_sub(elapsed).unwrap_or_default();
+        let sleep_time = if remaining < chunk { remaining } else { chunk };
+        thread::sleep(sleep_time);
+    }
+}
+
+/// Behaviour when pressing Return
+fn register_return() {
+    thread::spawn(|| {
+        listen(|e| {
+            if let Event {
+                event_type: KeyPress(Key::Return),
+                ..
+            } = e
+            {
+                ENTER_PRESSED.store(true, Ordering::Relaxed);
+            }
+        })
+        .expect("Can't listen to keyboard");
+    });
 }

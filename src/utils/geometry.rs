@@ -37,15 +37,27 @@ impl Dimensions {
     /// Useful when having to move the mouse out of any zones
     #[must_use]
     pub fn calculate_safe_point(&self, regions: &Vec<&Region>) -> Option<Point> {
+        // Use a screen margin of 10%
+        let margin_x = (self.width.cast_signed().bad_cast() * 0.1)
+            .bad_cast()
+            .cast_unsigned();
+        let margin_y = (self.height.cast_signed().bad_cast() * 0.1)
+            .bad_cast()
+            .cast_unsigned();
+
+        let allowed_min_x = margin_x;
+        let allowed_max_y = self.height - margin_y;
+
         regions
             .iter()
             .map(|r| {
-                let [_, _, x_max, y_max] = r.corners();
-                // We substract a magic number for screen dimensions to not indicate a safe point out
-                // of Roblox (magic number could be where our taskbar live for example)
+                let [x_min, _, _, y_max] = r.corners();
+                let padding = 20; // extra safety
+
+                // go before and below the region, but not past left and bottom margin
                 Point {
-                    x: x_max.min(self.width - 50),
-                    y: (y_max + 30).min(self.height - 50),
+                    x: x_min.saturating_sub(padding).max(allowed_min_x),
+                    y: (y_max + padding).min(allowed_max_y),
                 }
             })
             .min_by_key(|p| p.x + p.y)
