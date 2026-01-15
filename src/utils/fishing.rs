@@ -5,11 +5,7 @@ use std::{
 
 use image::{Rgb, RgbImage};
 
-use crate::utils::{
-    colors::ColorTarget,
-    geometry::{Point, Region},
-    helpers::BadCast,
-};
+use crate::utils::{colors::ColorTarget, geometry::Region, helpers::BadCast};
 
 #[derive(Clone)]
 pub struct HookPosition {
@@ -183,48 +179,47 @@ impl MiniGame {
     /// Search if the fish is hooked based on the mouse above the minigame
     #[must_use]
     pub fn any_fish_hooked(&self, screen: &RgbImage) -> bool {
-        // Use mouse above minigame bar
-        let approx_y = (screen.height().cast_signed().bad_cast() * 0.72)
-            .bad_cast()
-            .cast_unsigned();
-        let mouse = Region {
-            point1: Point {
-                x: self.point1.x - 5 + self.get_size().width / 2,
-                y: approx_y + 1,
-            },
-            point2: Point {
-                x: self.point1.x + 9 + self.get_size().width / 2,
-                y: approx_y + 8,
-            },
-        };
+        let x = (screen.width() / 2) + 7;
+        let (y_min, y_max) = (
+            (screen.height().cast_signed().bad_cast() * 0.7).bad_cast(),
+            (screen.height().cast_signed().bad_cast() * 0.8).bad_cast(),
+        );
 
         // #[cfg(feature = "imageproc")]
         // {
-        //     use crate::utils::debug::Drawable;
+        //     use crate::{Point, utils::debug::Drawable};
         //     use std::sync::Arc;
 
-        //     mouse
-        //         .clone()
-        //         .draw_async(Arc::new(screen.clone()), "mouses/0.png", false);
+        //     Region {
+        //         point1: Point {
+        //             x: x - 1,
+        //             y: y_min.cast_unsigned(),
+        //         },
+        //         point2: Point {
+        //             x: x + 1,
+        //             y: y_max.cast_unsigned(),
+        //         },
+        //     }
+        //     .draw_async(Arc::new(screen.clone()), "mouses/0.png", false);
         // }
 
-        let [x_min, y_min, x_max, y_max] = mouse.corners();
-        let y = y_min.midpoint(y_max);
-        let consecutive = 10;
-        (x_min..=x_max.saturating_sub(consecutive - 1)).any(|x_start| {
-            let Rgb([r1, g1, b1]) = *screen.get_pixel(x_start, y);
-            (0..consecutive).all(|i| {
-                let Rgb([r2, g2, b2]) = *screen.get_pixel(x_start + i, y);
-                let tolerance = 3;
-                let brightness = ColorTarget::brightness(screen.get_pixel(x_start + i, y));
-                let correct_brightness =
-                    (210..240).contains(&brightness) || (90..120).contains(&brightness);
-                correct_brightness
-                    && (i16::from(r1) - i16::from(r2)).abs() <= tolerance
-                    && (i16::from(g1) - i16::from(g2)).abs() <= tolerance
-                    && (i16::from(b1) - i16::from(b2)).abs() <= tolerance
-            })
-        })
+        let consecutive = 20;
+        (y_min.cast_unsigned()..=y_max.cast_unsigned().saturating_sub(consecutive - 1)).any(
+            |y_start| {
+                let Rgb([r1, g1, b1]) = *screen.get_pixel(x, y_start);
+                (0..consecutive).all(|i| {
+                    let Rgb([r2, g2, b2]) = *screen.get_pixel(x, y_start + i);
+                    let tolerance = 3;
+                    let brightness = ColorTarget::brightness(screen.get_pixel(x, y_start + i));
+                    let correct_brightness =
+                        (210..240).contains(&brightness) || (90..120).contains(&brightness);
+                    correct_brightness
+                        && (i16::from(r1) - i16::from(r2)).abs() <= tolerance
+                        && (i16::from(g1) - i16::from(g2)).abs() <= tolerance
+                        && (i16::from(b1) - i16::from(b2)).abs() <= tolerance
+                })
+            },
+        )
     }
 
     /// This HAS to be called at the very beginning of the fishing process
