@@ -2877,7 +2877,7 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 [[package]]
 name = "window_raiser"
 version = "0.1.0"
-source = "git+https://git.mylloon.fr/Anri/window_raiser?rev=56ad658#56ad6580435b07de9529671287db57d3d38e564b"
+source = "git+https://git.mylloon.fr/Anri/window_raiser?rev=308b322#308b322101312de293b6d87796ecbaebe9a2cd7b"
 dependencies = [
  "tempfile",
  "uuid",

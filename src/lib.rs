@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use enigo::{Axis, Enigo, InputResult, Mouse};
 use image::RgbImage;
 use log::warn;
 use scap::{
@@ -29,6 +30,7 @@ pub fn get_roblox_executable_name<'a>() -> &'a str {
 }
 
 #[cfg(target_os = "windows")]
+#[must_use]
 pub fn get_roblox_executable_name<'a>() -> &'a str {
     "RobloxPlayerBeta.exe"
 }
@@ -74,9 +76,9 @@ impl ScreenRecorder {
         // Create capturer on primary display
         let mut capturer = Capturer::build(Options {
             fps: 10,
-            target: None, // None means primary display
             show_cursor: false,
-            show_highlight: false, // border around what is being captured
+            show_highlight: false, // border around what is being captur
+            target: None,          // None means primary display
             output_resolution: Resolution::Captured,
             ..Default::default()
         })
@@ -179,12 +181,13 @@ impl ScreenRecorder {
                         .flat_map(|pixel| [pixel[2], pixel[1], pixel[0]])
                         .collect(),
                 )),
+                // Weirdly, we receive here RGBA frames
                 Frame::BGRA(bgra) => Ok(RgbImage::from_raw(
                     bgra.width.cast_unsigned(),
                     bgra.height.cast_unsigned(),
                     bgra.data
                         .chunks(4)
-                        .flat_map(|pixel| [pixel[2], pixel[1], pixel[0]])
+                        .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
                         .collect(),
                 )),
                 Frame::YUVFrame(_) => unimplemented!(),
@@ -327,5 +330,49 @@ pub fn sleep(duration: Duration, cond: &AtomicBool) {
     while start.elapsed() < duration && !cond.load(Ordering::Relaxed) {
         let remaining = duration.checked_sub(start.elapsed()).unwrap_or_default();
         thread::sleep(if remaining < chunk { remaining } else { chunk });
+    }
+}
+
+pub trait Scroller {
+    /// Scroll with fixes for Roblox
+    ///
+    /// # Errors
+    /// If couldn't scroll
+    fn scroll_ig(&mut self, length: i32, axis: Axis) -> InputResult<()>;
+
+    /// Return maximum scroll needed for Fisch
+    fn max_scroll() -> i32;
+}
+
+impl Scroller for Enigo {
+    fn scroll_ig(&mut self, length: i32, axis: Axis) -> InputResult<()> {
+        #[cfg(target_os = "linux")]
+        {
+            self.scroll(length, axis)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::thread::sleep;
+
+            let step = length.signum();
+            (0..length.abs()).try_for_each(|_| {
+                sleep(Duration::from_millis(30));
+                self.scroll(step, axis)
+            })
+        }
+    }
+
+    /// Return maximum scroll needed for Fisch
+    fn max_scroll() -> i32 {
+        #[cfg(target_os = "linux")]
+        {
+            8
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            13
+        }
     }
 }

@@ -20,7 +20,7 @@ rand = "0.9"
 rdev = { git = "https://github.com/Narsil/rdev", rev="c14f2dc", features = ["wayland"] }
 scap = { git = "https://github.com/Mylloon/scap", branch="0.0.8-with-windows-send" }
 sysinfo = "0.37"
-window_raiser = { git = "https://git.mylloon.fr/Anri/window_raiser", rev="56ad658" }
+window_raiser = { git = "https://git.mylloon.fr/Anri/window_raiser", rev="308b322" }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

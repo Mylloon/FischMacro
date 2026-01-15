@@ -22,7 +22,7 @@ use fischy::utils::{
     geometry::{Dimensions, Point, Region},
     helpers::BadCast,
 };
-use fischy::{ScreenRecorder, Stats, check_running, get_roblox_executable_name, sleep};
+use fischy::{ScreenRecorder, Scroller, Stats, check_running, get_roblox_executable_name, sleep};
 use image::Rgb;
 use log::{debug, info, warn};
 use rand::Rng;
@@ -43,8 +43,7 @@ To make this program work:
 #[allow(clippy::struct_excessive_bools)]
 struct Args {
     /// Sleep between shakes to prevent capturing the cursor
-    #[cfg(target_os = "linux")]
-    #[arg(long, default_value_t = 300)]
+    #[arg(long, default_value_t = 400)]
     lag: u32,
 
     /// Maximum shake count
@@ -525,10 +524,10 @@ fn hold_formula(gap: i32, estimated_speed: i32, full_area: &Dimensions) -> u32 {
 
 /// Returns the coordinates of the shake bubble
 fn check_shake(
-    enigo: &mut Enigo,
+    #[allow(unused_variables)] enigo: &mut Enigo,
     recorder: &mut ScreenRecorder,
     region: &Region,
-    safe_point: &Point,
+    #[allow(unused_variables)] safe_point: &Point,
     args: &Args,
 ) -> Option<Point> {
     let [x_min, y_min, x_max, y_max] = region.corners().map(u32::cast_signed);
@@ -559,6 +558,11 @@ fn check_shake(
             ),
             &SHUTDOWN,
         );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        sleep(Duration::from_millis(args.lag.into()), &SHUTDOWN);
     }
 
     let pure_white = ColorTarget {
@@ -678,7 +682,12 @@ fn initialize_viewpoint(enigo: &mut Enigo, screen_dims: &Dimensions, cond: &Atom
         .expect("Going to safepoint failed");
 
     // Looking at the floor
+    #[cfg(target_os = "linux")]
     let movement = (0, screen_dims.height.cast_signed() / 2);
+
+    #[cfg(not(target_os = "linux"))]
+    let movement = (0, screen_dims.height.cast_signed() / -2);
+
     let steps = 2;
     (0..=steps).for_each(|_| {
         enigo.button(Button::Right, Press).expect("Pressing failed");
@@ -702,8 +711,10 @@ fn initialize_viewpoint(enigo: &mut Enigo, screen_dims: &Dimensions, cond: &Atom
     });
 
     // Zoom
-    enigo.scroll(-8, Vertical).expect("Can't zoom in");
-    enigo.scroll(1, Vertical).expect("Can't zoom out");
+    enigo
+        .scroll_ig(-Enigo::max_scroll(), Vertical)
+        .expect("Can't zoom in");
+    enigo.scroll_ig(1, Vertical).expect("Can't zoom out");
 }
 
 /// Register specific keypress that will stop the program

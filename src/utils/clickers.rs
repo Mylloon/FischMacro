@@ -9,7 +9,7 @@ use log::info;
 use rdev::{Event, EventType, EventType::KeyPress, Key, listen, simulate};
 
 use crate::{
-    ScreenRecorder, sleep,
+    ScreenRecorder, Scroller, sleep,
     utils::{geometry::Point, helpers::BadCast},
 };
 
@@ -103,7 +103,7 @@ pub fn sell_items(
         x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.36)
             .bad_cast()
             .cast_unsigned(),
-        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.66)
+        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.67)
             .bad_cast()
             .cast_unsigned(),
     };
@@ -120,8 +120,10 @@ pub fn sell_items(
     enigo
         .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
         .expect("Can't move mouse");
-    enigo.scroll(-8, Vertical).expect("Can't zoom in");
-    enigo.scroll(3, Vertical).expect("Can't zoom out");
+    enigo
+        .scroll_ig(-Enigo::max_scroll(), Vertical)
+        .expect("Can't zoom in");
+    enigo.scroll_ig(3, Vertical).expect("Can't zoom out");
 
     #[cfg(feature = "imageproc")]
     {
@@ -183,7 +185,7 @@ pub fn appraise_items(
         x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.36)
             .bad_cast()
             .cast_unsigned(),
-        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.66)
+        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.67)
             .bad_cast()
             .cast_unsigned(),
     };
@@ -200,8 +202,10 @@ pub fn appraise_items(
     enigo
         .move_mouse(safe_point.x.cast_signed(), safe_point.y.cast_signed(), Abs)
         .expect("Can't move mouse");
-    enigo.scroll(-8, Vertical).expect("Can't zoom in");
-    enigo.scroll(2, Vertical).expect("Can't zoom out");
+    enigo
+        .scroll_ig(-Enigo::max_scroll(), Vertical)
+        .expect("Can't zoom in");
+    enigo.scroll_ig(2, Vertical).expect("Can't zoom out");
 
     #[cfg(feature = "imageproc")]
     {
