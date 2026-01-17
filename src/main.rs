@@ -59,8 +59,12 @@ struct Args {
     stats: bool,
 
     /// Disable camera setup looking down at the start
-    #[arg(long)]
+    #[arg(short, long)]
     no_camera_setup: bool,
+
+    /// Change minimum reaction time, in milliseconds
+    #[arg(long, default_value_t = 100)]
+    sensitivity: u32,
 
     /// Debugging purposes
     #[arg(short, long, default_value_t = false)]
@@ -344,21 +348,6 @@ fn fishing_loop(
     args: &Args,
     stats: &mut Stats,
 ) {
-    let fish_color = &[
-        ColorTarget {
-            color: Rgb([0x43, 0x4b, 0x5b]),
-            variation: 3,
-        },
-        ColorTarget {
-            color: Rgb([0x4a, 0x4a, 0x5c]),
-            variation: 4,
-        },
-        ColorTarget {
-            color: Rgb([0x47, 0x51, 0x5d]),
-            variation: 4,
-        },
-    ];
-
     let loop_time = Instant::now();
     let mut previous_hook_x = 0;
     while !SHUTDOWN.load(Ordering::Relaxed) {
@@ -366,22 +355,22 @@ fn fishing_loop(
             .take_screenshot()
             .expect("Couldn't take screenshot");
 
-        // Get current fish position
-        // FIXME: Support rods with "slashing" abilities
-        let fish_x =
-            if let Some(Point { x, .. }) = mini_game.search_color_mid_ltr(&screen, fish_color) {
-                if args.shake_only {
-                    continue;
-                }
-                x.cast_signed()
-            } else {
-                info!("The bite is over");
-                enigo.button(Button::Left, Release).expect("Packup the rod");
-                stats.add_fishing_time(loop_time.elapsed().as_secs());
-                break;
-            };
-
         let hook = mini_game.find_hook(&screen);
+
+        // Get current fish position
+        let fish_x = if hook.fish_on
+            && let Some(Point { x, .. }) = mini_game.get_fish(&screen)
+        {
+            if args.shake_only {
+                continue;
+            }
+            x.cast_signed()
+        } else {
+            info!("The bite is over");
+            enigo.button(Button::Left, Release).expect("Packup the rod");
+            stats.add_fishing_time(loop_time.elapsed().as_secs());
+            break;
+        };
 
         // Check if fish is very far left or very far right
         let mini_game_fish_percentage = (((fish_x - mini_game.point1.x.cast_signed()).bad_cast()
@@ -443,10 +432,10 @@ fn fishing_loop(
                 .expect("Releasing failed");
         }
 
-        let hold_time = hold_formula(range, speed, &mini_game.get_size());
+        let hold_time = hold_formula(range, speed, &mini_game.get_size(), args.sensitivity);
 
         info!("Found fish at x={fish_x} - distance fish<->hook is {range} - holding {hold_time}ms");
-        wait_until(recorder, mini_game, hold_time.into(), fish_color);
+        wait_until(recorder, mini_game, hold_time.into());
 
         previous_hook_x = hook_x; // update previous hook position
     }
@@ -497,7 +486,7 @@ fn reels(
 
 /// Determine how long we should hold the line in milliseconds
 /// based on distances between the fish and the middle of the hook
-fn hold_formula(gap: i32, estimated_speed: i32, full_area: &Dimensions) -> u32 {
+fn hold_formula(gap: i32, estimated_speed: i32, full_area: &Dimensions, sensitity: u32) -> u32 {
     let gap_abs = gap.abs().bad_cast();
     let max_gap = full_area.width.cast_signed().bad_cast() / 2.;
 
@@ -505,7 +494,7 @@ fn hold_formula(gap: i32, estimated_speed: i32, full_area: &Dimensions) -> u32 {
     // let eased = t * t; // quadratic curve
     let eased = normalized_gap.powi(3); // cubic curve
 
-    let min_ms = 100.;
+    let min_ms = sensitity.cast_signed().bad_cast();
     let max_ms = 1500.;
 
     let mut ms = min_ms + eased * (max_ms - min_ms);
@@ -603,12 +592,7 @@ fn check_shake(
 /// 1. Fish in the window
 /// 2. Fish escaped and at least half of time is out
 /// 3. Time runs out
-fn wait_until(
-    recorder: &mut ScreenRecorder,
-    mini_game: &mut MiniGame,
-    time_ms: u64,
-    fish_color: &[ColorTarget],
-) {
+fn wait_until(recorder: &mut ScreenRecorder, mini_game: &mut MiniGame, time_ms: u64) {
     let deadline = Instant::now() + Duration::from_millis(time_ms);
 
     // % of time
@@ -642,9 +626,7 @@ fn wait_until(
                     .bad_cast(),
             );
 
-            let fish_x = mini_game
-                .search_color_mid_ltr(&screen, fish_color)
-                .map(|p| p.x);
+            let fish_x = mini_game.get_fish(&screen).map(|p| p.x);
 
             // If no fish found or fish is outside valid range, return whether fish was found
             match fish_x {

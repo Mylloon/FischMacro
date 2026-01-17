@@ -75,7 +75,7 @@ impl Drawable for Region {
             img,
             Rect::at(self.point1.x.cast_signed(), self.point1.y.cast_signed())
                 .of_size(dims.width, dims.height),
-            Rgb([0, 0, 0xff]),
+            Rgb([0xff, 0, 0]),
         )
         .save(path)
         .ok();

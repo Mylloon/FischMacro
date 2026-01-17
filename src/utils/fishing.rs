@@ -5,7 +5,11 @@ use std::{
 
 use image::{Rgb, RgbImage};
 
-use crate::utils::{colors::ColorTarget, geometry::Region, helpers::BadCast};
+use crate::utils::{
+    colors::ColorTarget,
+    geometry::{Point, Region},
+    helpers::BadCast,
+};
 
 #[derive(Clone)]
 pub struct HookPosition {
@@ -27,6 +31,14 @@ pub struct Hook {
 
     /// If the fish is currently on the hook
     pub fish_on: bool,
+
+    /// Last known position of a fish
+    last_fish_position: Option<Point>,
+}
+
+pub enum FishPosition {
+    Exact(Point),
+    Approximative(Point),
 }
 
 pub struct Rod {
@@ -42,6 +54,7 @@ impl Rod {
                     position: Some(position),
                     length,
                     fish_on: false,
+                    last_fish_position: None,
                 },
             },
             None => Rod {
@@ -55,6 +68,7 @@ impl Rod {
                             .bad_cast()
                             .cast_unsigned(),
                         fish_on: false,
+                        last_fish_position: None,
                     }
                 },
             },
@@ -68,6 +82,8 @@ impl Rod {
     fn search_hook(screen: &RgbImage, region: &Region) -> Option<(u32, HookPosition)> {
         let [x_min, y_min, x_max, y_max] = region.corners();
         let y = y_min.midpoint(y_max);
+
+        // TODO: Scale with screen resolution?
         let gap_tolerance = 35; // take into account arrows and fish that overlap the hook bar
 
         let brightnesses = (x_min..=x_max)
@@ -143,6 +159,49 @@ impl Rod {
         self.update_hook(image, mini_game_region);
         self.internals.clone()
     }
+
+    /// Find fish inside the minigame
+    pub fn get_fish(
+        &mut self,
+        image: &RgbImage,
+        mini_game_region: &Region,
+    ) -> Option<FishPosition> {
+        if !self.internals.fish_on {
+            return None;
+        }
+
+        // Here we could store the fish position that we deduce from segments sizes in `search_hook`
+        // Instead of relying on fish_color
+
+        let fish_color = &[
+            ColorTarget {
+                color: Rgb([0x43, 0x4b, 0x5b]),
+                variation: 3,
+            },
+            ColorTarget {
+                color: Rgb([0x4a, 0x4a, 0x5c]),
+                variation: 4,
+            },
+            ColorTarget {
+                color: Rgb([0x47, 0x51, 0x5d]),
+                variation: 4,
+            },
+        ];
+
+        match mini_game_region.search_color_mid_ltr(image, fish_color) {
+            // Return fresh fish position
+            Some(pos) => {
+                self.internals.last_fish_position = Some(pos.clone());
+                Some(FishPosition::Exact(pos))
+            }
+            // Return latest known position (the fish is probably getting slashed)
+            None => self
+                .internals
+                .last_fish_position
+                .as_ref()
+                .map(|p| FishPosition::Approximative(p.clone())),
+        }
+    }
 }
 
 /// Enhanced region
@@ -185,23 +244,23 @@ impl MiniGame {
             (screen.height().cast_signed().bad_cast() * 0.8).bad_cast(),
         );
 
-        // #[cfg(feature = "imageproc")]
-        // {
-        //     use crate::{Point, utils::debug::Drawable};
-        //     use std::sync::Arc;
+        #[cfg(feature = "imageproc")]
+        {
+            use crate::{Point, utils::debug::Drawable};
+            use std::sync::Arc;
 
-        //     Region {
-        //         point1: Point {
-        //             x: x - 1,
-        //             y: y_min.cast_unsigned(),
-        //         },
-        //         point2: Point {
-        //             x: x + 1,
-        //             y: y_max.cast_unsigned(),
-        //         },
-        //     }
-        //     .draw_async(Arc::new(screen.clone()), "mouses/0.png", false);
-        // }
+            Region {
+                point1: Point {
+                    x: x - 1,
+                    y: y_min.cast_unsigned(),
+                },
+                point2: Point {
+                    x: x + 1,
+                    y: y_max.cast_unsigned(),
+                },
+            }
+            .draw_async(Arc::new(screen.clone()), "mouses/0.png", false);
+        }
 
         let consecutive = 20;
         (y_min.cast_unsigned()..=y_max.cast_unsigned().saturating_sub(consecutive - 1)).any(
@@ -259,5 +318,20 @@ impl MiniGame {
             .as_mut()
             .expect("Couldn't find rod")
             .find_hook(image, &self.outer)
+    }
+
+    /// Return latest known fish position
+    ///
+    /// # Panics
+    /// If there is no rod stored
+    pub fn get_fish(&mut self, image: &RgbImage) -> Option<Point> {
+        self.rod
+            .as_mut()
+            .expect("Couldn't find rod")
+            .get_fish(image, &self.outer)
+            .and_then(|p| match p {
+                FishPosition::Exact(p) => Some(p),
+                FishPosition::Approximative(p) => self.any_fish_hooked(image).then_some(p),
+            })
     }
 }
