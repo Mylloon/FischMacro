@@ -1,4 +1,4 @@
-# Fischy
+# Fischy [![status-badge](https://git.mylloon.fr/Anri/Fischy/badges/workflows/release.yml/badge.svg)](https://git.mylloon.fr/Anri/Fischy/actions?workflow=release.yml)
 
 This is a rewrite of [Cweamy's macro](https://github.com/Cweamy/Fisch-Cream-s-Macro).
 
