@@ -4,6 +4,7 @@ use std::{
 };
 
 use image::{Rgb, RgbImage};
+use log::debug;
 
 use crate::utils::{
     colors::ColorTarget,
@@ -123,13 +124,21 @@ impl Rod {
 
         segments
             .into_iter()
+            // We trim the size of the fish cuirsor width on each side,
+            // in case the bar is not in the hook but next to it
+            .map(|(l, r)| {
+                // TODO: Scale with screen resolution?
+                let fish_cursor_size = 20;
+                (l - fish_cursor_size, r - fish_cursor_size)
+            })
+            // Compute width
             .map(|(l, r)| (r - l, l, r))
             // Keep longest segment
             .max_by_key(|(width, _, _)| *width)
+            // INFO: we could map only once and create directly our structure,
+            //       but since we can get MANY segments (like ~400),
+            //       we only do that for the chosen one
             .map(|(width, l, r)| {
-                // INFO: we could map only once and create directly our structure,
-                //       but since we can get MANY segments (like ~400),
-                //       we only do that for the chosen one
                 (
                     width,
                     HookPosition {
@@ -238,7 +247,13 @@ impl MiniGame {
     /// Search if the fish is hooked based on the mouse above the minigame
     #[must_use]
     pub fn any_fish_hooked(&self, screen: &RgbImage) -> bool {
-        let x = (screen.width() / 2) + 7;
+        // We use multiple scanlines, to be more resilient in the case of a slash above the mouse
+        let (x_min, x_max) = {
+            let half = screen.width() / 2;
+            (half + 5, half + 7)
+        };
+
+        // Large height to accomadate many screen dispositions
         let (y_min, y_max) = (
             (screen.height().cast_signed().bad_cast() * 0.7).bad_cast(),
             (screen.height().cast_signed().bad_cast() * 0.8).bad_cast(),
@@ -251,11 +266,11 @@ impl MiniGame {
 
             Region {
                 point1: Point {
-                    x: x - 1,
+                    x: x_min,
                     y: y_min.cast_unsigned(),
                 },
                 point2: Point {
-                    x: x + 1,
+                    x: x_max,
                     y: y_max.cast_unsigned(),
                 },
             }
@@ -263,22 +278,28 @@ impl MiniGame {
         }
 
         let consecutive = 20;
-        (y_min.cast_unsigned()..=y_max.cast_unsigned().saturating_sub(consecutive - 1)).any(
-            |y_start| {
-                let Rgb([r1, g1, b1]) = *screen.get_pixel(x, y_start);
-                (0..consecutive).all(|i| {
-                    let Rgb([r2, g2, b2]) = *screen.get_pixel(x, y_start + i);
-                    let tolerance = 3;
-                    let brightness = ColorTarget::brightness(screen.get_pixel(x, y_start + i));
-                    let correct_brightness =
-                        (210..240).contains(&brightness) || (90..120).contains(&brightness);
-                    correct_brightness
-                        && (i16::from(r1) - i16::from(r2)).abs() <= tolerance
-                        && (i16::from(g1) - i16::from(g2)).abs() <= tolerance
-                        && (i16::from(b1) - i16::from(b2)).abs() <= tolerance
-                })
-            },
-        )
+        (x_min..=x_max)
+            .rev() // 7 → 6 → 5 → 4
+            .any(|x| {
+                (y_min.cast_unsigned()..=y_max.cast_unsigned().saturating_sub(consecutive - 1)).any(
+                    |y_start| {
+                        let Rgb([r1, g1, b1]) = *screen.get_pixel(x, y_start);
+                        (0..consecutive).all(|i| {
+                            let Rgb([r2, g2, b2]) = *screen.get_pixel(x, y_start + i);
+                            let tolerance = 3;
+                            let brightness =
+                                ColorTarget::brightness(screen.get_pixel(x, y_start + i));
+                            // Bright/Dark mouse
+                            let correct_brightness =
+                                (210..240).contains(&brightness) || (90..120).contains(&brightness);
+                            correct_brightness
+                                && (i16::from(r1) - i16::from(r2)).abs() <= tolerance
+                                && (i16::from(g1) - i16::from(g2)).abs() <= tolerance
+                                && (i16::from(b1) - i16::from(b2)).abs() <= tolerance
+                        })
+                    },
+                )
+            })
     }
 
     /// This HAS to be called at the very beginning of the fishing process
@@ -333,5 +354,43 @@ impl MiniGame {
                 FishPosition::Exact(p) => Some(p),
                 FishPosition::Approximative(p) => self.any_fish_hooked(image).then_some(p),
             })
+    }
+}
+
+pub enum Move {
+    Left,
+    Right,
+    Spam,
+}
+
+impl Move {
+    /// Decide of the movement to make
+    ///
+    /// - `minimum_speed` is the minimum where we start considering doing "fast" movement
+    ///
+    /// # Panics
+    /// If couldn't find hook
+    #[must_use]
+    pub fn decision(hook_length: i32, range: i32, speed: i32, minimum_speed: i32) -> Self {
+        let half = hook_length / 2;
+        let third = hook_length / 3;
+        let treshold = (half.bad_cast() * 0.8).bad_cast(); // % of the hook
+
+        if range > half {
+            debug!("Fish really right side");
+            Move::Right
+        } else if range < -half {
+            debug!("Fish really left side");
+            Move::Left
+        } else if range > treshold || (range < third && speed < -minimum_speed) {
+            debug!("Fish on the right side or close left but we accumulate speed we need to break");
+            Move::Right
+        } else if range < -treshold || (range > -third && speed > minimum_speed) {
+            debug!("Fish on the left side or close right but we accumulate speed we need to break");
+            Move::Left
+        } else {
+            debug!("Fish very close, stabilize");
+            Move::Spam
+        }
     }
 }

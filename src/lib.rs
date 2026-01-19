@@ -10,6 +10,7 @@ use std::{
 use enigo::{Axis, Coordinate::Abs, Enigo, InputResult, Mouse};
 use image::RgbImage;
 use log::warn;
+use rand::Rng;
 use scap::{
     capturer::{Capturer, Options, Resolution},
     frame::Frame,
@@ -320,6 +321,18 @@ impl Stats {
             *self.min_fishing_time = (*self.min_fishing_time).min(time);
         }
     }
+}
+
+/// Sleep `n` millis with random jitter in millis
+pub fn sleep_with_jitter(ms: u64, jitter: i64, cond: &AtomicBool) {
+    sleep(
+        Duration::from_millis(
+            (ms.cast_signed() + rand::rng().random_range(-jitter..=jitter))
+                .max(0)
+                .cast_unsigned(),
+        ),
+        cond,
+    );
 }
 
 /// Sleep for `duration`

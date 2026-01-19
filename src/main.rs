@@ -15,17 +15,19 @@ use enigo::{
 use fischy::utils::clickers::{
     appraise_items, fetch_crab_cages, place_crab_cages, sell_items, summon_totem,
 };
-use fischy::utils::fishing::MiniGame;
+use fischy::utils::fishing::{MiniGame, Move};
 use fischy::utils::{
     colors::ColorTarget,
     fishing::Rod,
     geometry::{Dimensions, Point, Region},
     helpers::BadCast,
 };
-use fischy::{ScreenRecorder, Scroller, Stats, check_running, get_roblox_executable_name, sleep};
+use fischy::{
+    ScreenRecorder, Scroller, Stats, check_running, get_roblox_executable_name, sleep,
+    sleep_with_jitter,
+};
 use image::Rgb;
-use log::{debug, info, warn};
-use rand::Rng;
+use log::{info, warn};
 use rdev::{Event, EventType::KeyPress, Key, listen};
 use window_raiser::raise;
 
@@ -38,7 +40,8 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
     long_about = r#"
 To make this program work:
     - hide the quest (top-right book button) and scoreboard (tab)
-    - be sure to run Roblox maximised on your primary screen"#
+    - be sure to run Roblox maximised/fullscreen on your leftest screen
+    - don't be too close from the edge, fishing moves you a little"#
 )]
 #[allow(clippy::struct_excessive_bools)]
 struct Args {
@@ -47,52 +50,54 @@ struct Args {
     lag: u32,
 
     /// Maximum shake count
-    #[arg(short, long, default_value_t = 20)]
+    #[arg(long, default_value_t = 40)]
     max_shake_count: u8,
 
     /// Do only the shake part
-    #[arg(long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false)]
     shake_only: bool,
 
-    /// Compute and print stats
-    #[arg(short, long, default_value_t = false)]
-    stats: bool,
+    /// Don't print stats
+    #[arg(long, default_value_t = false)]
+    no_stats: bool,
 
     /// Disable camera setup looking down at the start
-    #[arg(short, long)]
+    #[arg(long)]
     no_camera_setup: bool,
 
-    /// Change minimum reaction time, in milliseconds
+    /// Change reaction time, in milliseconds
     #[arg(long, default_value_t = 100)]
-    sensitivity: u32,
+    sensitivity: u64,
 
     /// Debugging purposes
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
 
-    /// Click n times to put crab cages (you have to be already holding it being able to put them)
-    #[arg(long, num_args(0..=1), default_missing_value = "65535")]
+    /// Click n times to put crab cages (you have to be already holding it being able to put them,
+    /// only work where crab cages are stackable)
+    #[arg(short, long, num_args(0..=1), default_missing_value = "65535")]
     place_crab_cages: Option<u16>,
 
-    /// Retrieves crab cages (you have to be able to see the button to collect them)
-    #[arg(long, num_args(0..=1), default_missing_value = "65535")]
+    /// Retrieves crab cages (you have to be able to see the button to collect them,
+    /// only work where crab cages are stackable)
+    #[arg(short, long, num_args(0..=1), default_missing_value = "65535")]
     fetch_crab_cages: Option<u16>,
 
-    /// Retrieves crab cages (you have to be able to see the button to collect them)
-    #[arg(long, num_args(0..=1), default_missing_value = "65535")]
+    /// Summon totem (you have to hold the one you want to use)
+    #[arg(short('t'), long, num_args(0..=1), default_missing_value = "65535")]
     summon_totem: Option<u16>,
 
-    /// Sell items (you have to see the "I'd like to sell this" with 2 dialogs options)
-    #[arg(long, num_args(0..=1), default_missing_value = "65535")]
+    /// Sell items to merchant (you have to see the "I'd like to sell this" with 2 dialogs options)
+    #[arg(short('m'), long, num_args(0..=1), default_missing_value = "65535")]
     sell_items: Option<u16>,
 
     /// Appraise items (you have to see the "Can you appraise this fish?" with 3 dialogs options).
     /// You will have to press `Return` to do another appraisal
-    #[arg(long)]
+    #[arg(short('a'), long)]
     appraise_items: bool,
 }
 
-/// Init logger based on debug level
+/// Init logger based on verbose option
 fn init_logger(verbose: bool) {
     let mut builder = env_logger::Builder::new();
     if verbose {
@@ -146,6 +151,7 @@ fn main() {
 
     // scoreboard_check(&mut enigo, &mut recorder);
     // chat_check(&mut enigo, &mut recorder);
+    // quest_check(&mut enigo, &mut recorder);
 
     // Calculate regions based on screen dimensions
     let mut mini_game_region = recorder.dimensions.calculate_mini_game_region();
@@ -202,7 +208,7 @@ fn main() {
         exit(0);
     }
 
-    let mut stats = Stats::new(args.stats);
+    let mut stats = Stats::new(!args.no_stats);
 
     if !args.no_camera_setup {
         initialize_viewpoint(&mut enigo, &recorder.dimensions, &SHUTDOWN);
@@ -298,7 +304,12 @@ fn macro_loop(
 
         // Called during the first fish
         if mini_game.rod.is_none() && is_hooked {
-            if let Ok(()) = mini_game.refine_area(&screen) {
+            // Wait slide-in animation of the minigame
+            sleep(Duration::from_millis(150), &SHUTDOWN);
+            let fresher_screen = recorder
+                .take_screenshot()
+                .expect("Failed taking screenshot");
+            if let Ok(()) = mini_game.refine_area(&fresher_screen) {
                 info!("Updating minigame structure");
             } else {
                 info!("Failed updating the minigame structure");
@@ -311,13 +322,13 @@ fn macro_loop(
                 use std::sync::Arc;
 
                 mini_game.clone().draw_async(
-                    Arc::new(screen.clone()),
+                    Arc::new(fresher_screen.clone()),
                     "mini_game_refined.png",
                     true,
                 );
             }
 
-            mini_game.initialize_rod(Rod::new(&screen, mini_game));
+            mini_game.initialize_rod(Rod::new(&fresher_screen, mini_game));
         }
 
         // When one fish is on the hook
@@ -328,7 +339,7 @@ fn macro_loop(
             info!("Fishing ended!");
 
             // After fishing interaction, reel again
-            sleep(Duration::from_secs(2), &SHUTDOWN);
+            sleep_with_jitter(2000, 100, &SHUTDOWN);
             reels(
                 enigo,
                 &mut last_shake_time,
@@ -348,7 +359,7 @@ fn fishing_loop(
     args: &Args,
     stats: &mut Stats,
 ) {
-    let loop_time = Instant::now();
+    let fishing_time = Instant::now();
     let mut previous_hook_x = 0;
     while !SHUTDOWN.load(Ordering::Relaxed) {
         let screen = recorder
@@ -368,26 +379,31 @@ fn fishing_loop(
         } else {
             info!("The bite is over");
             enigo.button(Button::Left, Release).expect("Packup the rod");
-            stats.add_fishing_time(loop_time.elapsed().as_secs());
+            stats.add_fishing_time(fishing_time.elapsed().as_secs());
             break;
         };
 
-        // Check if fish is very far left or very far right
-        let mini_game_fish_percentage = (((fish_x - mini_game.point1.x.cast_signed()).bad_cast()
+        let fish_pos_as_minigame_bar_percentage = (((fish_x - mini_game.point1.x.cast_signed())
+            .bad_cast()
             / mini_game.get_size().width.cast_signed().bad_cast())
             * 100.)
             .bad_cast();
-        // % treshold defining extreme edge (half of the hookbar)
-        let mini_game_percentage_treshold = (((hook.length / 2) * 100).cast_signed().bad_cast()
-            / mini_game.get_size().width.cast_signed().bad_cast())
-        .bad_cast();
-        if mini_game_fish_percentage < mini_game_percentage_treshold {
+
+        // % treshold defining extreme edge
+        let mini_game_percentage_edge_treshold =
+            // half of the hook bar
+            (((hook.length / 2) * 100).cast_signed().bad_cast()
+                / mini_game.get_size().width.cast_signed().bad_cast())
+            .bad_cast();
+
+        // Check if fish is very far left or very far right
+        if fish_pos_as_minigame_bar_percentage < mini_game_percentage_edge_treshold {
             info!("Giving some slack...");
             enigo
                 .button(Button::Left, Release)
                 .expect("Failed giving slack");
             continue;
-        } else if mini_game_fish_percentage > 100 - mini_game_percentage_treshold {
+        } else if fish_pos_as_minigame_bar_percentage > 100 - mini_game_percentage_edge_treshold {
             info!("Tighting the line...");
             enigo
                 .button(Button::Left, Press)
@@ -395,48 +411,34 @@ fn fishing_loop(
             continue;
         }
 
-        if !hook.fish_on {
-            info!("Didn't find any color corresponding to the hook");
-            warn!("It's hard to keep up with this fish");
-            enigo.button(Button::Left, Release).expect("Packup the rod");
-            continue;
-        }
-
-        // Calculate range between fish and hook
         let hook_x = hook
             .position
             .expect("Can't find the hook")
             .absolute_mid_x
             .cast_signed();
+
+        // INFO: As a side effect I did not explain yet, it tends to keep
+        //       the fish on the 20% of the hook bar (pretty smart strategy IMO)
         let range = fish_x - hook_x;
         let speed = hook_x - previous_hook_x;
-        info!("Distance fish ({fish_x}) and hook ({hook_x}) is {range}");
-
-        // % of the hook bar
-        if range.abs() <= ((hook.length.cast_signed().bad_cast() / 2.) * 0.40).bad_cast()
-            && speed.abs() < 20
-            && range < hook.length.cast_signed()
-        {
-            // Spamming to stay more easily in range, only if speed is not too high
-            enigo.button(Button::Left, Click).expect("Clicking failed");
+        match Move::decision(hook.length.cast_signed(), range, speed, 5) {
+            Move::Left => {
+                info!("<== To the left <==");
+                enigo.button(Button::Left, Release).expect("Going left");
+            }
+            Move::Right => {
+                info!("==> To the right ==>");
+                enigo.button(Button::Left, Press).expect("Going right");
+            }
+            Move::Spam => {
+                info!("=== Spamming, the fish is close ===");
+                enigo.button(Button::Left, Click).expect("Clicking failed");
+            }
         }
 
-        // let _ = mini_game.any_fish_hooked(&screen);
-        if range >= 0 {
-            info!("==> To the right! ==>");
-            enigo.button(Button::Left, Press).expect("Pressing failed");
-        } else {
-            info!("<== To the left! <==");
-            enigo
-                .button(Button::Left, Release)
-                .expect("Releasing failed");
-        }
+        info!("Found fish at x={fish_x} - distance fish<->hook is {range} - hook speed is {speed}");
 
-        let hold_time = hold_formula(range, speed, &mini_game.get_size(), args.sensitivity);
-
-        info!("Found fish at x={fish_x} - distance fish<->hook is {range} - holding {hold_time}ms");
-        wait_until(recorder, mini_game, hold_time.into());
-
+        sleep_with_jitter(args.sensitivity, 3, &SHUTDOWN);
         previous_hook_x = hook_x; // update previous hook position
     }
 }
@@ -458,20 +460,14 @@ fn reels(
     enigo
         .button(Button::Left, Click)
         .expect("Can't click before reel");
-    sleep(
-        Duration::from_millis(rand::rng().random_range(60..=80)),
-        &SHUTDOWN,
-    );
+    sleep_with_jitter(70, 10, &SHUTDOWN);
 
     info!("Reeling...");
     // Casting motion
     enigo
         .button(Button::Left, Press)
         .expect("Can't backswing: failed to press mouse button");
-    sleep(
-        Duration::from_millis(rand::rng().random_range(600..=1200)),
-        &SHUTDOWN,
-    );
+    sleep_with_jitter(900, 300, &SHUTDOWN);
     enigo
         .button(Button::Left, Release)
         .expect("Can't release the line: failed to release mouse button");
@@ -482,33 +478,6 @@ fn reels(
 
     *shake_count = 0;
     *last_shake_time = Instant::now();
-}
-
-/// Determine how long we should hold the line in milliseconds
-/// based on distances between the fish and the middle of the hook
-fn hold_formula(gap: i32, estimated_speed: i32, full_area: &Dimensions, sensitity: u32) -> u32 {
-    let gap_abs = gap.abs().bad_cast();
-    let max_gap = full_area.width.cast_signed().bad_cast() / 2.;
-
-    let normalized_gap = (gap_abs / max_gap).clamp(0., 1.);
-    // let eased = t * t; // quadratic curve
-    let eased = normalized_gap.powi(3); // cubic curve
-
-    let min_ms = sensitity.cast_signed().bad_cast();
-    let max_ms = 1500.;
-
-    let mut ms = min_ms + eased * (max_ms - min_ms);
-
-    // Stopping power by reducing holding time
-    if gap.signum() == estimated_speed.signum() {
-        let max_speed = 200.;
-        // INFO: We could increase brake force by multiplying this value
-        let v = (estimated_speed.abs().bad_cast() / max_speed).clamp(0., 1.);
-        let brake_boost = 1. + v.powi(2) * 0.5;
-        ms /= brake_boost;
-    }
-
-    ms.round().bad_cast().cast_unsigned()
 }
 
 /// Returns the coordinates of the shake bubble
@@ -588,68 +557,6 @@ fn check_shake(
     shake_point
 }
 
-/// Stop waiting until:
-/// 1. Fish in the window
-/// 2. Fish escaped and at least half of time is out
-/// 3. Time runs out
-fn wait_until(recorder: &mut ScreenRecorder, mini_game: &mut MiniGame, time_ms: u64) {
-    let deadline = Instant::now() + Duration::from_millis(time_ms);
-
-    // % of time
-    let acceptable = Instant::now()
-        + Duration::from_millis(
-            (i32::try_from(time_ms.cast_signed())
-                .expect("Couldn't cast")
-                .bad_cast()
-                * 0.5)
-                .bad_cast()
-                .cast_unsigned()
-                .into(),
-        );
-
-    while !SHUTDOWN.load(Ordering::Relaxed) {
-        let now = Instant::now();
-        if now >= deadline {
-            info!("Waited long enough");
-            break;
-        }
-
-        let screen = recorder.take_screenshot().expect("Can't take screenshot");
-
-        let hook = mini_game.find_hook(&screen);
-        if let Some(hook_position) = hook.position {
-            debug!(
-                "Hook percentage: ~{}% ",
-                (hook.length.cast_signed().bad_cast()
-                    / mini_game.get_size().width.cast_signed().bad_cast()
-                    * 100.)
-                    .bad_cast(),
-            );
-
-            let fish_x = mini_game.get_fish(&screen).map(|p| p.x);
-
-            // If no fish found or fish is outside valid range, return whether fish was found
-            match fish_x {
-                None => {
-                    info!("Fish escaped");
-                    return;
-                }
-                Some(x)
-                    if x >= hook_position.absolute_beg_x
-                        && x <= hook_position.absolute_end_x
-                        && now >= acceptable =>
-                {
-                    info!("Fish is in the range and we waited long enough");
-                    return;
-                }
-                _ => { /* Keep waiting */ }
-            }
-        }
-    }
-
-    info!("Did not succeed to put the fish in the hook, deciding another action...");
-}
-
 /// Initialize where the player is looking
 fn initialize_viewpoint(enigo: &mut Enigo, screen_dims: &Dimensions, cond: &AtomicBool) {
     let padding = (screen_dims.width.cast_signed().bad_cast() * 0.2).bad_cast();
@@ -660,7 +567,7 @@ fn initialize_viewpoint(enigo: &mut Enigo, screen_dims: &Dimensions, cond: &Atom
         .expect("Going to safepoint failed");
 
     // Looking at the floor
-    let movement = (0, screen_dims.height.cast_signed() / 2);
+    let movement = (0, screen_dims.height.cast_signed() / 3);
 
     let steps = 2;
     (0..=steps).for_each(|_| {
@@ -716,6 +623,11 @@ fn register_keybinds() {
 
 // /// Close chat if open
 // fn chat_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
+//     todo!("Check if chat is open => Close it by pressing the button")
+// }
+
+// /// Close quest panel if open
+// fn quest_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
 //     todo!("Check if chat is open => Close it by pressing the button")
 // }
 
