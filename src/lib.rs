@@ -356,7 +356,7 @@ pub trait Scroller {
     /// Return maximum scroll needed for Fisch
     fn max_scroll() -> i32;
 
-    /// Move mouse with fixes for Roblox by smoothing movement
+    /// Move mouse with fixes for Roblox by smoothing movement if needed
     ///
     /// # Errors
     /// If couldn't move the mouse

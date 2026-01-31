@@ -8,12 +8,9 @@ use enigo::{Axis::Vertical, Button, Direction::Click, Enigo, Mouse};
 use log::info;
 use rdev::{Event, EventType, EventType::KeyPress, Key, listen, simulate};
 
-use crate::{
-    ScreenRecorder, Scroller, sleep,
-    utils::{geometry::Point, helpers::BadCast},
-};
+use crate::{ScreenRecorder, Scroller, sleep, utils::geometry::Point};
 
-static ENTER_PRESSED: AtomicBool = AtomicBool::new(false);
+static ENTER_PRESSED: AtomicBool = AtomicBool::new(true);
 
 /// Place a crab cage, assume that the player already set-up everything and we are left clicking
 ///
@@ -100,20 +97,12 @@ pub fn sell_items(
     cond: &AtomicBool,
 ) {
     let item = Point {
-        x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.36)
-            .bad_cast()
-            .cast_unsigned(),
-        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.67)
-            .bad_cast()
-            .cast_unsigned(),
+        x: recorder.dimensions.width * 36 / 100,
+        y: recorder.dimensions.height * 67 / 100,
     };
     let dialog = Point {
-        x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.63)
-            .bad_cast()
-            .cast_unsigned(),
-        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.53)
-            .bad_cast()
-            .cast_unsigned(),
+        x: recorder.dimensions.width * 63 / 100,
+        y: recorder.dimensions.height * 53 / 100,
     };
 
     // Move mouse
@@ -150,9 +139,11 @@ pub fn sell_items(
         enigo
             .move_mouse_ig_abs(item.x.cast_signed(), item.y.cast_signed())
             .expect("Couldn't move mouse to item");
+        sleep(Duration::from_millis(100), cond);
         enigo
             .button(Button::Left, Click)
             .expect("Couldn't select item");
+        sleep(Duration::from_millis(100), cond);
 
         // Sell
         enigo
@@ -170,7 +161,7 @@ pub fn sell_items(
     }
 }
 
-/// Appraise items, assume that the player entered the dialog "Can you appraise this fish" with 3 options.
+/// Appraise items, assume that the player hold the item and entered the dialog "Can you appraise this fish" with 3 options.
 /// User have to press `RETURN` to do another appraisal
 ///
 /// # Panics
@@ -180,22 +171,11 @@ pub fn appraise_items(
     safe_point: &Point,
     recorder: &mut ScreenRecorder,
     cond: &AtomicBool,
+    no_pause: bool,
 ) {
-    let item = Point {
-        x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.36)
-            .bad_cast()
-            .cast_unsigned(),
-        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.67)
-            .bad_cast()
-            .cast_unsigned(),
-    };
     let dialog = Point {
-        x: (recorder.dimensions.width.cast_signed().bad_cast() * 0.63)
-            .bad_cast()
-            .cast_unsigned(),
-        y: (recorder.dimensions.height.cast_signed().bad_cast() * 0.51)
-            .bad_cast()
-            .cast_unsigned(),
+        x: recorder.dimensions.width * 63 / 100,
+        y: recorder.dimensions.height * 51 / 100,
     };
 
     // Move mouse
@@ -219,30 +199,22 @@ pub fn appraise_items(
                 .expect("Couldn't take screenshot"),
         );
 
-        item.clone()
-            .draw_async(screen.clone(), "appraise_item.png", true);
         dialog
             .clone()
             .draw_async(screen, "appraise_dialog.png", true);
     }
 
+    enigo
+        .move_mouse_ig_abs(dialog.x.cast_signed(), dialog.y.cast_signed())
+        .expect("Couldn't move mouse to dialog");
+
     register_return();
     while !cond.load(Ordering::Relaxed) {
-        ENTER_PRESSED.store(false, Ordering::SeqCst);
-        // Item
-        sleep(Duration::from_millis(100), cond);
-        enigo
-            .move_mouse_ig_abs(item.x.cast_signed(), item.y.cast_signed())
-            .expect("Couldn't move mouse to item");
-        sleep(Duration::from_millis(100), cond);
-        enigo
-            .button(Button::Left, Click)
-            .expect("Couldn't select item");
+        if !no_pause {
+            ENTER_PRESSED.store(false, Ordering::SeqCst);
+        }
 
         // Ask for price
-        enigo
-            .move_mouse_ig_abs(dialog.x.cast_signed(), dialog.y.cast_signed())
-            .expect("Couldn't move mouse to dialog");
         enigo
             .button(Button::Left, Click)
             .expect("Couldn't ask for appraisal");

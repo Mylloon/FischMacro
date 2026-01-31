@@ -12,6 +12,9 @@ use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
+use fischy::utils::checks::{
+    chat_check, quest_check, scoreboard_check, server_alive_check, treasure_maps_check,
+};
 use fischy::utils::clickers::{
     appraise_items, fetch_crab_cages, place_crab_cages, sell_items, summon_totem,
 };
@@ -26,7 +29,7 @@ use fischy::{
     ScreenRecorder, Scroller, Stats, check_running, get_roblox_executable_name, sleep,
     sleep_with_jitter,
 };
-use image::Rgb;
+use image::{Rgb, RgbImage};
 use log::{info, warn};
 use rdev::{Event, EventType::KeyPress, Key, listen};
 use window_raiser::raise;
@@ -39,9 +42,9 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
     about,
     long_about = r#"
 To make this program work:
-    - hide the quest (top-right book button) and scoreboard (tab)
-    - be sure to run Roblox maximised/fullscreen on your leftest screen
-    - don't be too close from the edge, fishing moves you a little"#
+  - be sure to run Roblox maximised on your leftest screen
+  - if you have your taskbar on the side of your screen, use fullscreen (F11)
+  - don't be too close from the edge when fishing as it moves you a little"#
 )]
 #[allow(clippy::struct_excessive_bools)]
 struct Args {
@@ -66,7 +69,7 @@ struct Args {
     no_camera_setup: bool,
 
     /// Change reaction time, in milliseconds
-    #[arg(long, default_value_t = 100)]
+    #[arg(long, default_value_t = 50)]
     sensitivity: u64,
 
     /// Debugging purposes
@@ -91,10 +94,12 @@ struct Args {
     #[arg(short('m'), long, num_args(0..=1), default_missing_value = "65535")]
     sell_items: Option<u16>,
 
-    /// Appraise items (you have to see the "Can you appraise this fish?" with 3 dialogs options).
-    /// You will have to press `Return` to do another appraisal
-    #[arg(short('a'), long)]
-    appraise_items: bool,
+    /// Appraise items (you have to hold the fish
+    ///                 and see the "Can you appraise this fish?" with 3 dialogs options).
+    /// By default, you have to press `Return` to do another appraisal
+    /// if forced (set to true), then confirmation will be automatic (good for Shiny and Sparkling)
+    #[arg(short('a'), long, num_args(0..=1), default_missing_value = "false")]
+    appraise_items: Option<bool>,
 }
 
 /// Init logger based on verbose option
@@ -114,7 +119,7 @@ fn pre_init() -> Args {
 
     info!("Starting Roblox Fishing Macro");
     if args.verbose {
-        info!("== Debug mode enabled ==");
+        info!("Debug mode enabled");
     }
 
     // Check that Roblox is running
@@ -149,13 +154,30 @@ fn main() {
         recorder.dimensions.width, recorder.dimensions.height
     );
 
-    // scoreboard_check(&mut enigo, &mut recorder);
-    // chat_check(&mut enigo, &mut recorder);
-    // quest_check(&mut enigo, &mut recorder);
-
     // Calculate regions based on screen dimensions
+    let screen = recorder
+        .take_screenshot()
+        .expect("Couldn't take screenshot");
+
+    // Click once, so we are sure we grabbed the window focus
+    // TODO: Is this a Linux-only thing?
+    enigo
+        .button(Button::Left, Click)
+        .expect("Failed while being sure to focus the window");
+
+    let roblox_button_position = recorder.dimensions.find_roblox_button(&screen);
+
+    scoreboard_check(&mut enigo, &screen);
+    if let Some(p) = roblox_button_position.as_ref() {
+        // Quest check after chat check, because chat window moves the arrow
+        chat_check(&mut enigo, &screen, p, &SHUTDOWN);
+        quest_check(&mut enigo, &screen, p, &SHUTDOWN);
+    }
+
     let mut mini_game_region = recorder.dimensions.calculate_mini_game_region();
-    let shake_region = recorder.dimensions.calculate_shake_region();
+    let shake_region = recorder
+        .dimensions
+        .calculate_shake_region(roblox_button_position);
     let safe_point = recorder
         .dimensions
         .calculate_safe_point(&vec![&mini_game_region, &shake_region])
@@ -166,11 +188,7 @@ fn main() {
         use fischy::utils::debug::Drawable;
         use std::sync::Arc;
 
-        let screen = Arc::new(
-            recorder
-                .take_screenshot()
-                .expect("Couldn't take screenshot"),
-        );
+        let screen = Arc::new(screen);
 
         mini_game_region
             .clone()
@@ -203,8 +221,14 @@ fn main() {
         exit(0);
     }
 
-    if args.appraise_items {
-        appraise_items(&mut enigo, &safe_point, &mut recorder, &SHUTDOWN);
+    if let Some(deactivate_user_confirmation) = args.appraise_items {
+        appraise_items(
+            &mut enigo,
+            &safe_point,
+            &mut recorder,
+            &SHUTDOWN,
+            deactivate_user_confirmation,
+        );
         exit(0);
     }
 
@@ -251,8 +275,11 @@ fn macro_loop(
 
     while !SHUTDOWN.load(Ordering::Relaxed) {
         // Check for shake
-        if let Some(Point { x, y }) = check_shake(enigo, recorder, shake_region, safe_point, args) {
-            // server_alive_check(&mut enigo, &mut recorder);
+        if let Some((Point { x, y }, image)) =
+            check_shake(enigo, recorder, shake_region, safe_point, args)
+            && server_alive_check(&image, &SHUTDOWN)
+        {
+            treasure_maps_check(enigo, &image, &SHUTDOWN);
 
             // Click at the shake position
             info!("Shake @ ({x}, {y})");
@@ -487,35 +514,19 @@ fn check_shake(
     region: &Region,
     #[allow(unused_variables)] safe_point: &Point,
     args: &Args,
-) -> Option<Point> {
+) -> Option<(Point, RgbImage)> {
     let [x_min, y_min, x_max, y_max] = region.corners().map(u32::cast_signed);
 
     // Move cursor out of the region (Sober creates a custom cursor)
     #[cfg(target_os = "linux")]
     {
         // Sleep 1 / 3 to be sure we correctly move the cursor
-        sleep(
-            Duration::from_millis(
-                (args.lag.cast_signed().bad_cast() * 1. / 3.)
-                    .bad_cast()
-                    .cast_unsigned()
-                    .into(),
-            ),
-            &SHUTDOWN,
-        );
+        sleep(Duration::from_millis((args.lag / 3).into()), &SHUTDOWN);
         enigo
             .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
             .expect("Can't move mouse");
         // Sleep 2 / 3 to be sure the screenshot won't capture our cursor
-        sleep(
-            Duration::from_millis(
-                (args.lag.cast_signed().bad_cast() * 2. / 3.)
-                    .bad_cast()
-                    .cast_unsigned()
-                    .into(),
-            ),
-            &SHUTDOWN,
-        );
+        sleep(Duration::from_millis((args.lag * 2 / 3).into()), &SHUTDOWN);
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -554,16 +565,16 @@ fn check_shake(
         }
     }
 
-    shake_point
+    shake_point.map(|p| (p, screen))
 }
 
 /// Initialize where the player is looking
 fn initialize_viewpoint(enigo: &mut Enigo, screen_dims: &Dimensions, cond: &AtomicBool) {
-    let padding = (screen_dims.width.cast_signed().bad_cast() * 0.2).bad_cast();
+    let padding = screen_dims.width * 20 / 100;
 
     // "Safepoint"
     enigo
-        .move_mouse_ig_abs(screen_dims.width.cast_signed() / 2, padding)
+        .move_mouse_ig_abs(screen_dims.width.cast_signed() / 2, padding.cast_signed())
         .expect("Going to safepoint failed");
 
     // Looking at the floor
@@ -615,23 +626,3 @@ fn register_keybinds() {
         .expect("Can't listen to keyboard");
     });
 }
-
-// /// Close scoreboard if open
-// fn scoreboard_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
-//     todo!("Check if scoreboard is open => Close it by pressing <tab>")
-// }
-
-// /// Close chat if open
-// fn chat_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
-//     todo!("Check if chat is open => Close it by pressing the button")
-// }
-
-// /// Close quest panel if open
-// fn quest_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
-//     todo!("Check if chat is open => Close it by pressing the button")
-// }
-
-// /// Close if server have shutdown
-// fn server_alive_check(enigo: &mut Enigo, recorder: &mut ScreenRecorder) {
-//     todo!("Check if popup in the center => Exit the program in this case")
-// }

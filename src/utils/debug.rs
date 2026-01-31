@@ -8,7 +8,7 @@ use std::{
 
 use image::{Rgb, RgbImage};
 use imageproc::{
-    drawing::{draw_hollow_circle, draw_hollow_circle_mut, draw_hollow_rect},
+    drawing::{draw_hollow_circle_mut, draw_hollow_rect_mut},
     rect::Rect,
 };
 
@@ -70,34 +70,45 @@ pub trait Drawable {
 
 impl Drawable for Region {
     fn draw_logic(&self, img: &RgbImage, path: PathBuf) {
-        let dims = self.get_size();
-        draw_hollow_rect(
-            img,
-            Rect::at(self.point1.x.cast_signed(), self.point1.y.cast_signed())
-                .of_size(dims.width, dims.height),
-            Rgb([0xff, 0, 0]),
-        )
-        .save(path)
-        .ok();
+        vec![self.clone()].draw_logic(img, path);
     }
 }
 
 impl Drawable for Point {
     fn draw_logic(&self, img: &RgbImage, path: PathBuf) {
-        let mut tmp = draw_hollow_circle(
-            img,
-            (self.x.cast_signed(), self.y.cast_signed()),
-            40,
-            Rgb([0xff, 0, 0]),
-        );
+        vec![self.clone()].draw_logic(img, path);
+    }
+}
 
-        draw_hollow_circle_mut(
-            &mut tmp,
-            (self.x.cast_signed(), self.y.cast_signed()),
-            5,
-            Rgb([0xff, 0, 0]),
-        );
+impl Drawable for Vec<Region> {
+    fn draw_logic(&self, img: &RgbImage, path: PathBuf) {
+        let mut tmp = img.clone();
+        for region in self {
+            let dims = region.get_size();
+            draw_hollow_rect_mut(
+                &mut tmp,
+                Rect::at(region.point1.x.cast_signed(), region.point1.y.cast_signed())
+                    .of_size(dims.width, dims.height),
+                Rgb([0xff, 0, 0]),
+            );
+        }
+        tmp.save(path).ok();
+    }
+}
 
+impl Drawable for Vec<Point> {
+    fn draw_logic(&self, img: &RgbImage, path: PathBuf) {
+        let mut tmp = img.clone();
+        for point in self {
+            for &radius in &[40, 5] {
+                draw_hollow_circle_mut(
+                    &mut tmp,
+                    (point.x.cast_signed(), point.y.cast_signed()),
+                    radius,
+                    Rgb([0xff, 0, 0]),
+                );
+            }
+        }
         tmp.save(path).ok();
     }
 }

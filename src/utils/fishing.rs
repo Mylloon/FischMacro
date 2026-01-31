@@ -9,7 +9,6 @@ use log::debug;
 use crate::utils::{
     colors::ColorTarget,
     geometry::{Point, Region},
-    helpers::BadCast,
 };
 
 #[derive(Clone)]
@@ -64,10 +63,7 @@ impl Rod {
                     let percentage = 30;
                     Hook {
                         position: None,
-                        length: (mini_game_region.get_size().width.cast_signed().bad_cast()
-                            * (percentage.bad_cast() / 100.))
-                            .bad_cast()
-                            .cast_unsigned(),
+                        length: (mini_game_region.get_size().width * percentage / 100),
                         fish_on: false,
                         last_fish_position: None,
                     }
@@ -254,10 +250,7 @@ impl MiniGame {
         };
 
         // Large height to accomadate many screen dispositions
-        let (y_min, y_max) = (
-            (screen.height().cast_signed().bad_cast() * 0.7).bad_cast(),
-            (screen.height().cast_signed().bad_cast() * 0.8).bad_cast(),
-        );
+        let (y_min, y_max) = (screen.height() * 70 / 100, screen.height() * 80 / 100);
 
         #[cfg(feature = "imageproc")]
         {
@@ -265,14 +258,8 @@ impl MiniGame {
             use std::sync::Arc;
 
             Region {
-                point1: Point {
-                    x: x_min,
-                    y: y_min.cast_unsigned(),
-                },
-                point2: Point {
-                    x: x_max,
-                    y: y_max.cast_unsigned(),
-                },
+                point1: Point { x: x_min, y: y_min },
+                point2: Point { x: x_max, y: y_max },
             }
             .draw_async(Arc::new(screen.clone()), "mouses/0.png", false);
         }
@@ -281,24 +268,21 @@ impl MiniGame {
         (x_min..=x_max)
             .rev() // 7 → 6 → 5 → 4
             .any(|x| {
-                (y_min.cast_unsigned()..=y_max.cast_unsigned().saturating_sub(consecutive - 1)).any(
-                    |y_start| {
-                        let Rgb([r1, g1, b1]) = *screen.get_pixel(x, y_start);
-                        (0..consecutive).all(|i| {
-                            let Rgb([r2, g2, b2]) = *screen.get_pixel(x, y_start + i);
-                            let tolerance = 3;
-                            let brightness =
-                                ColorTarget::brightness(screen.get_pixel(x, y_start + i));
-                            // Bright/Dark mouse
-                            let correct_brightness =
-                                (210..240).contains(&brightness) || (90..120).contains(&brightness);
-                            correct_brightness
-                                && (i16::from(r1) - i16::from(r2)).abs() <= tolerance
-                                && (i16::from(g1) - i16::from(g2)).abs() <= tolerance
-                                && (i16::from(b1) - i16::from(b2)).abs() <= tolerance
-                        })
-                    },
-                )
+                (y_min..=y_max.saturating_sub(consecutive - 1)).any(|y_start| {
+                    let Rgb([r1, g1, b1]) = *screen.get_pixel(x, y_start);
+                    (0..consecutive).all(|i| {
+                        let Rgb([r2, g2, b2]) = *screen.get_pixel(x, y_start + i);
+                        let tolerance = 3;
+                        let brightness = ColorTarget::brightness(screen.get_pixel(x, y_start + i));
+                        // Bright/Dark mouse
+                        let correct_brightness =
+                            (210..240).contains(&brightness) || (90..120).contains(&brightness);
+                        correct_brightness
+                            && (i16::from(r1) - i16::from(r2)).abs() <= tolerance
+                            && (i16::from(g1) - i16::from(g2)).abs() <= tolerance
+                            && (i16::from(b1) - i16::from(b2)).abs() <= tolerance
+                    })
+                })
             })
     }
 
@@ -374,7 +358,7 @@ impl Move {
     pub fn decision(hook_length: i32, range: i32, speed: i32, minimum_speed: i32) -> Self {
         let half = hook_length / 2;
         let third = hook_length / 3;
-        let treshold = (half.bad_cast() * 0.8).bad_cast(); // % of the hook
+        let treshold = half * 80 / 100; // % of the hook
 
         if range > half {
             debug!("Fish really right side");
