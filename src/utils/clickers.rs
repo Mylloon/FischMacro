@@ -226,7 +226,7 @@ pub fn appraise_items(
         enigo
             .button(Button::Left, Click)
             .expect("Couldn't appraise item");
-        sleep(Duration::from_secs(2), cond);
+        sleep(Duration::from_secs_f32(2.5), cond);
     }
 }
 
