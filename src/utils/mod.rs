@@ -1,3 +1,4 @@
+pub mod args;
 pub mod checks;
 pub mod clickers;
 pub mod colors;

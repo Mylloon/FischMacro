@@ -12,16 +12,13 @@ use enigo::{
     Direction::{Click, Press, Release},
     Enigo, Mouse, Settings,
 };
-use fischy::utils::checks::{
-    chat_check, quest_check, scoreboard_check, server_alive_check, treasure_maps_check,
-};
-use fischy::utils::clickers::{
-    appraise_items, fetch_crab_cages, place_crab_cages, sell_items, summon_totem,
-};
-use fischy::utils::fishing::{MiniGame, Move};
 use fischy::utils::{
+    args::rod_position_parser,
+    checks::{chat_check, quest_check, scoreboard_check, server_alive_check, treasure_maps_check},
+    clickers::{appraise_items, fetch_crab_cages, place_crab_cages, sell_items, summon_totem},
     colors::ColorTarget,
     fishing::Rod,
+    fishing::{MiniGame, Move},
     geometry::{Dimensions, Point, Region},
     helpers::BadCast,
 };
@@ -31,7 +28,7 @@ use fischy::{
 };
 use image::{Rgb, RgbImage};
 use log::{info, warn};
-use rdev::{Event, EventType::KeyPress, Key, listen};
+use rdev::{Event, EventType::KeyPress, Key, listen, simulate};
 use window_raiser::raise;
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -67,6 +64,10 @@ struct Args {
     /// Disable camera setup looking down at the start
     #[arg(long)]
     no_camera_setup: bool,
+
+    /// Placement of the fishing rod in the hotbar
+    #[arg(long, default_value_t = 1, value_parser = rod_position_parser)]
+    rod_position_hotbar: u16,
 
     /// Change reaction time, in milliseconds
     #[arg(long, default_value_t = 50)]
@@ -263,6 +264,7 @@ fn macro_loop(
 ) {
     let mut last_shake_time = Instant::now();
     let mut shake_count = 0;
+    let mut tries_fishing = 0;
 
     // Initial reel
     reels(
@@ -374,8 +376,36 @@ fn macro_loop(
                 safe_point,
                 stats,
             );
+            tries_fishing = 0;
+            continue;
+        } else if tries_fishing >= 10 {
+            tries_fishing = 0;
+            reselect_rod(args).expect("Couldn't select the rod");
+            continue;
         }
+
+        tries_fishing += 1;
     }
+}
+
+/// Select the rod from the hotbar
+/// FIXME: This doesn't work properly on all platforms (Wayland)
+fn reselect_rod(args: &Args) -> Result<(), rdev::SimulateError> {
+    simulate(&rdev::EventType::KeyPress(
+        match args.rod_position_hotbar {
+            1 => Ok(Key::Num1),
+            2 => Ok(Key::Num2),
+            3 => Ok(Key::Num3),
+            4 => Ok(Key::Num4),
+            5 => Ok(Key::Num5),
+            6 => Ok(Key::Num6),
+            7 => Ok(Key::Num7),
+            8 => Ok(Key::Num8),
+            9 => Ok(Key::Num9),
+            _ => Err(()),
+        }
+        .expect("Unkown requested key"),
+    ))
 }
 
 /// Catch a fish!
