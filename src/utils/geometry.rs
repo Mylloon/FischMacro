@@ -45,10 +45,10 @@ impl Dimensions {
 
         let x = self.width * 2 / 100;
 
-        let pos = (0..=(self.height / 2)).rev().find_map(|y| {
+        let pos = (0..=(self.height / 2)).find_map(|y| {
             roblox_button_color
                 .matches(img.get_pixel(x, y))
-                .then_some(Point { x, y })
+                .then_some(Point { x, y: y + 10 })
         });
 
         #[cfg(feature = "imageproc")]

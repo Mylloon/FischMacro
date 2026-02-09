@@ -65,19 +65,22 @@ pub fn scoreboard_check(enigo: &mut Enigo, img: &RgbImage) {
 /// # Panics
 /// If couldn't close the chat
 pub fn chat_check(enigo: &mut Enigo, img: &RgbImage, roblox_anchor: &Point, cond: &AtomicBool) {
-    let x_positions = [
-        img.width() * 5 / 100,
-        img.width() * 10 / 100,
-        img.width() * 15 / 100,
-    ];
-    let [y_min, y_max] = [
-        roblox_anchor.y + img.height() * 5 / 100,
-        roblox_anchor.y + img.height() * 30 / 100,
-    ];
-
+    // Where to click
     let button = Point {
         x: roblox_anchor.x + img.width() * 5 / 100,
         y: roblox_anchor.y - 5,
+    };
+
+    // Where to check
+    let area = Region {
+        point1: Point {
+            x: button.x - img.width() * 8 / 1000,
+            y: button.y - img.height() * 5 / 1000,
+        },
+        point2: Point {
+            x: button.x + img.width() / 100,
+            y: button.y + img.height() * 2 / 100,
+        },
     };
 
     #[cfg(feature = "imageproc")]
@@ -88,16 +91,25 @@ pub fn chat_check(enigo: &mut Enigo, img: &RgbImage, roblox_anchor: &Point, cond
         button
             .clone()
             .draw_async(Arc::new(img.clone()), "roblox_chat_button.png", true);
-        x_positions
-            .map(|x| Region {
-                point1: Point { x: x - 1, y: y_min },
-                point2: Point { x: x + 1, y: y_max },
-            })
-            .to_vec()
-            .draw_async(Arc::new(img.clone()), "roblox_chat.png", true);
+        area.clone()
+            .draw_async(Arc::new(img.clone()), "roblox_chat_button_area.png", true);
     }
 
-    if text_detection(&x_positions, y_min, y_max, img) >= 20 {
+    let white_color_open_chat_button = ColorTarget {
+        color: Rgb([0xf7, 0xf7, 0xf8]),
+        variation: 2,
+    };
+    let [x_min, y_min, x_max, y_max] = area.corners();
+    let matching_pixels = (x_min..x_max)
+        .flat_map(|x| (y_min..y_max).map(move |y| (x, y)))
+        .filter(|(x, y)| white_color_open_chat_button.matches(img.get_pixel(*x, *y)))
+        .count();
+
+    let check = matching_pixels
+        / usize::try_from(((x_max - x_min) * (y_max - y_min)) / 100).unwrap_or(usize::MAX)
+        > 20; // treshold percentage of the same color in the area
+
+    if check {
         enigo
             .move_mouse_ig_abs(button.x.cast_signed(), button.y.cast_signed())
             .expect("Couldn't move mouse to chat button");

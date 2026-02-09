@@ -106,6 +106,7 @@ pub fn sell_items(
     };
 
     // Move mouse
+    // FIXME: Also change looking direction to get always the same text position
     enigo
         .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
@@ -179,6 +180,7 @@ pub fn appraise_items(
     };
 
     // Move mouse
+    // FIXME: Also change looking direction to get always the same text position
     enigo
         .move_mouse_ig_abs(safe_point.x.cast_signed(), safe_point.y.cast_signed())
         .expect("Can't move mouse");
